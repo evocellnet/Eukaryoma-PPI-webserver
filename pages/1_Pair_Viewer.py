@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit.components.v1 as components
 import streamlit as st
 
@@ -54,6 +55,12 @@ if len(matches) > 1:
     row = matches[matches["pool"] == pool_choice].iloc[0]
 else:
     row = matches.iloc[0]
+
+score = row.get("corrected_chain_pair_iptm")
+st.metric(
+    "Predicted interaction score (corrected ipTM)",
+    f"{score:.3f}" if pd.notna(score) else "n/a",
+)
 
 color_by = st.radio("Color by", ["chain", "plddt"], horizontal=True)
 

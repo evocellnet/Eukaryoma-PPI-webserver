@@ -13,10 +13,11 @@ with:
 
 ```
 data/
-├── report_file.tsv   # <pool_name>\t<protein_1>_<protein_2>_..._<protein_n>
-├── pools/             # <pool_name>.fcz, one pooled AF3 prediction per pool
-├── structures/         # generated: <pool_name>.cif, decompressed by build_data.py
-└── index/              # generated: pools.parquet, pairs.parquet
+├── report_file.tsv        # <pool_name>\t<protein_1>_<protein_2>_..._<protein_n>
+├── recap_set0_pairs.tsv    # per-pair AF3 interaction scores (see below)
+├── pools/                   # <pool_name>.fcz, one pooled AF3 prediction per pool
+├── structures/               # generated: <pool_name>.cif, decompressed by build_data.py
+└── index/                     # generated: pools.parquet, pairs.parquet
 ```
 
 By default the app looks for `data/` as a sibling of this repo checkout
@@ -26,6 +27,13 @@ inside Docker).
 
 The protein order in `report_file.tsv` matches the chain order (A, B, C, ...)
 in the pool's decompressed mmCIF structure.
+
+`recap_set0_pairs.tsv` has one row per (pair, AF3 sample) -- each pool is
+predicted with several seeds/samples, so a given pair appears several times
+with slightly different `corrected_chain_pair_iptm` values.
+`scripts/build_data.py` averages these into a single score per (pool, pair)
+and stores it in `data/index/pairs.parquet`, which the Pair Viewer page
+displays. Override its path with `EUKARYOMA_RECAP_FILE`.
 
 ## The `.fcz` format and `bin/foldcomp`
 

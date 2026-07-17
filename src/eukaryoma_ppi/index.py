@@ -8,11 +8,17 @@ mmCIF structure. Only pools that actually have a decompressed structure
 (data/structures/<pool>.cif) are indexed.
 """
 
+import re
+import warnings
 from itertools import combinations
 
 import pandas as pd
 
-from eukaryoma_ppi.config import PAIRS_INDEX_FILE, POOLS_INDEX_FILE, REPORT_FILE
+from eukaryoma_ppi.config import PAIRS_INDEX_FILE, POOLS_INDEX_FILE, RECAP_FILE, REPORT_FILE
+
+# Matches the two quoted protein ids in a recap "ids" cell, e.g.
+# "('xp0043429311', 'xp0043454971')".
+RECAP_IDS_RE = re.compile(r"'([^']+)',\s*'([^']+)'")
 
 def chain_letter(position):
     """0-indexed chain position -> mmCIF chain id (A, B, ..., Z, AA, AB, ...)."""
@@ -62,7 +68,48 @@ def build_index(available_pools):
 
     pools_df = pd.DataFrame.from_records(pool_records)
     pairs_df = pd.DataFrame.from_records(pair_records)
+    pairs_df = attach_scores(pairs_df)
     return pools_df, pairs_df
+
+
+def read_recap_scores():
+    """Load per-pair AlphaFold3 interaction scores from RECAP_FILE.
+
+    recap_set0_pairs.tsv has one row per (pair, sample) -- AF3 predicts each
+    pool several times (multiple seeds/samples) and this file records every
+    sample's score, so a given (pool, pair) shows up several times with
+    slightly different corrected_chain_pair_iptm values. We average those
+    into a single score per (pool, pair).
+    """
+    df = pd.read_csv(RECAP_FILE, sep="\t", usecols=["ids", "name", "corrected_chain_pair_iptm"])
+    parsed = df["ids"].str.extract(RECAP_IDS_RE)
+
+    lo = parsed[0].where(parsed[0] <= parsed[1], parsed[1])
+    hi = parsed[0].where(parsed[0] > parsed[1], parsed[1])
+    df["protein_lo"], df["protein_hi"] = lo, hi
+    df = df.rename(columns={"name": "pool"})
+
+    return (
+        df.groupby(["pool", "protein_lo", "protein_hi"])["corrected_chain_pair_iptm"]
+        .mean()
+        .reset_index()
+    )
+
+
+def attach_scores(pairs_df):
+    """Left-join the averaged AF3 interaction score onto the pairs index."""
+    if not RECAP_FILE.exists():
+        warnings.warn(f"RECAP_FILE not found at {RECAP_FILE}; pairs will have no iptm score.")
+        pairs_df["corrected_chain_pair_iptm"] = float("nan")
+        return pairs_df
+
+    scores = read_recap_scores()
+    protein_lo = pairs_df[["protein_a", "protein_b"]].min(axis=1)
+    protein_hi = pairs_df[["protein_a", "protein_b"]].max(axis=1)
+    merged = pairs_df.assign(protein_lo=protein_lo, protein_hi=protein_hi).merge(
+        scores, on=["pool", "protein_lo", "protein_hi"], how="left"
+    )
+    return merged.drop(columns=["protein_lo", "protein_hi"])
 
 
 def save_index(pools_df, pairs_df):

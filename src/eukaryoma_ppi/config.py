@@ -17,6 +17,10 @@ DATA_DIR = Path(os.environ.get("EUKARYOMA_DATA_DIR", REPO_ROOT.parent.parent / "
 REPORT_FILE = Path(os.environ.get("EUKARYOMA_REPORT_FILE", DATA_DIR / "report_file.tsv"))
 POOLS_DIR = Path(os.environ.get("EUKARYOMA_POOLS_DIR", DATA_DIR / "pools"))
 
+# Per-pair AlphaFold3 interaction scores (one row per pair per sample; see
+# eukaryoma_ppi.index.read_recap_scores for how these are aggregated).
+RECAP_FILE = Path(os.environ.get("EUKARYOMA_RECAP_FILE", DATA_DIR / "recap_set0_pairs.tsv"))
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
