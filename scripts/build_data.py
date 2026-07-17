@@ -14,6 +14,9 @@ It:
      have a structure, and writes data/index/pools.parquet and
      data/index/pairs.parquet -- the pair-lookup table the Streamlit app
      queries at runtime.
+  3. Parses protein annotations from the FASTA headers into
+     data/index/protein_annotations.parquet, and reports whether every
+     website protein id has a matching FASTA entry.
 
 The Streamlit app only ever reads data/structures/ and data/index/; it does
 not depend on foldcomp or the raw .fcz files.
@@ -26,8 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from eukaryoma_ppi import index
-from eukaryoma_ppi.config import FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
+from eukaryoma_ppi import annotations, index
+from eukaryoma_ppi.config import FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
 from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_pool
 
 
@@ -89,6 +92,22 @@ def main():
     pools_df, pairs_df = index.build_index(available)
     index.save_index(pools_df, pairs_df)
     print(f"Indexed {len(pools_df)} pools, {len(pairs_df)} protein pair occurrences.")
+
+    if FASTA_FILE.exists():
+        print("Parsing protein annotations from FASTA headers...")
+        annotations_df = annotations.parse_fasta_annotations()
+        annotations.save_annotations(annotations_df)
+        website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
+        missing = annotations.missing_protein_ids(website_ids, annotations_df)
+        if missing:
+            print(
+                f"  [WARN] {len(missing)}/{len(website_ids)} website protein ids have no FASTA annotation: "
+                f"{sorted(missing)[:10]}{'...' if len(missing) > 10 else ''}"
+            )
+        else:
+            print(f"  All {len(website_ids)} website protein ids matched a FASTA header ({len(annotations_df)} total).")
+    else:
+        print(f"  [WARN] FASTA_FILE not found at {FASTA_FILE}; skipping protein annotations.")
 
 
 if __name__ == "__main__":

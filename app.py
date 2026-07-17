@@ -31,4 +31,7 @@ col1.metric("Pools", f"{len(pools_df):,}")
 col2.metric("Unique proteins", f"{n_unique_proteins:,}")
 col3.metric("Protein pairs", f"{n_unique_pairs:,}")
 
-st.info("Use the **Pair Viewer** page in the sidebar to look up a pair and view its structure.")
+st.info(
+    "Use **Browse Pairs** in the sidebar to rank pairs by predicted interaction score, "
+    "or **Pair Viewer** to look up a specific pair directly."
+)

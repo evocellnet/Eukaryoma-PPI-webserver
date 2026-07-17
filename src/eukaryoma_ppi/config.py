@@ -21,12 +21,23 @@ POOLS_DIR = Path(os.environ.get("EUKARYOMA_POOLS_DIR", DATA_DIR / "pools"))
 # eukaryoma_ppi.index.read_recap_scores for how these are aggregated).
 RECAP_FILE = Path(os.environ.get("EUKARYOMA_RECAP_FILE", DATA_DIR / "recap_set0_pairs.tsv"))
 
+# Protein annotations (Pfam domains / descriptions) parsed from FASTA headers.
+# See eukaryoma_ppi.annotations for the id transformation this file's header
+# ids need to match the website's protein ids.
+FASTA_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_FASTA_FILE",
+        DATA_DIR / "OMAfiltered_MSfiltered_MICH_Capsaspora_owczarzaki_Schultz_A_annotated.fa",
+    )
+)
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
 INDEX_DIR = Path(os.environ.get("EUKARYOMA_INDEX_DIR", DATA_DIR / "index"))
 PAIRS_INDEX_FILE = INDEX_DIR / "pairs.parquet"
 POOLS_INDEX_FILE = INDEX_DIR / "pools.parquet"
+ANNOTATIONS_INDEX_FILE = INDEX_DIR / "protein_annotations.parquet"
 
 # Only needed for scripts/build_data.py (local/HPC preprocessing), never at
 # Streamlit runtime. This is a custom internal build of foldcomp that reads
