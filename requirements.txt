@@ -1,0 +1,5 @@
+streamlit>=1.38
+pandas>=2.2
+pyarrow>=17.0
+py3Dmol>=2.4
+biopython>=1.83
