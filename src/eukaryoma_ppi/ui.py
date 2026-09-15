@@ -12,13 +12,20 @@ def get_pdb_text(pool, chain_a, chain_b):
     return structures.extract_chains_as_pdb(pool, [chain_a, chain_b])
 
 
-def render_pair_detail(row, protein_a, protein_b, key_prefix=""):
-    """Render the score, color-by control, and 3D viewer for one pair row."""
-    score = row.get("corrected_chain_pair_iptm")
-    st.metric(
-        "Predicted interaction score (corrected ipTM)",
-        f"{score:.3f}" if pd.notna(score) else "n/a",
-    )
+def render_scores(row, score_fields):
+    """One st.metric per (column_name, display_label) in score_fields."""
+    cols = st.columns(len(score_fields))
+    for col, (score_col, label) in zip(cols, score_fields):
+        value = row.get(score_col)
+        col.metric(label, f"{value:.3f}" if pd.notna(value) else "n/a")
+
+
+def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
+    """3D viewer if this pair has an AF3 pool structure, else a plain notice."""
+    pool = row.get("pool")
+    if pd.isna(pool):
+        st.info("No AF3 structure has been predicted for this pair.")
+        return
 
     color_by = st.radio("Color by", ["chain", "plddt"], horizontal=True, key=f"{key_prefix}color_by")
 
@@ -27,8 +34,56 @@ def render_pair_detail(row, protein_a, protein_b, key_prefix=""):
     chain_for = {row["protein_a"]: row["chain_a"], row["protein_b"]: row["chain_b"]}
     chain_a, chain_b = chain_for[protein_a], chain_for[protein_b]
 
-    pdb_text = get_pdb_text(row["pool"], chain_a, chain_b)
+    pdb_text = get_pdb_text(pool, chain_a, chain_b)
     html = viewer.render_pair(pdb_text, chain_a, chain_b, color_by=color_by)
 
-    st.caption(f"Pool **{row['pool']}** &mdash; chain {chain_a} = {protein_a}, chain {chain_b} = {protein_b}")
+    st.caption(f"Pool **{pool}** &mdash; chain {chain_a} = {protein_a}, chain {chain_b} = {protein_b}")
     components.html(html, height=580)
+
+
+def render_pair_detail(row, protein_a, protein_b, key_prefix=""):
+    """Score + color-by control + 3D viewer for one AF3 pool pair row."""
+    render_scores(row, [("corrected_chain_pair_iptm", "Predicted interaction score (corrected ipTM)")])
+    render_structure_if_available(row, protein_a, protein_b, key_prefix=key_prefix)
+
+
+def render_ranked_pair_table(df, sort_col, column_order, column_config, score_fields, default_top_n=500, key_prefix=""):
+    """Sortable/selectable pair table; selecting a row shows its scores and,
+    when available, its 3D structure.
+
+    df must have protein_a/protein_b columns, and pool/chain_a/chain_b for
+    rows that have a predicted structure (NaN otherwise).
+    score_fields: [(column_name, display_label), ...] shown as metrics.
+    """
+    ranked = df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    top_n = st.number_input(
+        "Show top N pairs",
+        min_value=10,
+        max_value=len(ranked),
+        value=min(default_top_n, len(ranked)),
+        step=10,
+        key=f"{key_prefix}topn",
+    )
+    displayed = ranked.head(top_n)
+
+    event = st.dataframe(
+        displayed,
+        column_order=column_order,
+        column_config=column_config,
+        hide_index=True,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"{key_prefix}table",
+    )
+
+    selected_rows = event.selection.rows
+    if not selected_rows:
+        st.info("Select a row above to view that pair's scores and structure.")
+        return
+
+    row = displayed.iloc[selected_rows[0]]
+    st.divider()
+    st.subheader(f"{row['protein_a']} — {row['protein_b']}")
+    render_scores(row, score_fields)
+    render_structure_if_available(row, row["protein_a"], row["protein_b"], key_prefix=key_prefix)

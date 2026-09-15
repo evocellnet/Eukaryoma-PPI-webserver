@@ -6,9 +6,12 @@ at once (a "pool"); this tool extracts and renders the two chains for any
 specific protein pair contained in a pool. Loosely modelled on
 [mutfunc](https://github.com/jurgjn/mutfunc)'s local-lookup + 3D-viewer UX.
 
-Two ways to pick a pair: **Browse Pairs** ranks every pair by predicted
-interaction score (select a row to view its structure), and **Pair Viewer**
-looks up a specific pair by protein id.
+Ways to pick a pair: **Browse Pairs** ranks AF3 pool pairs by predicted
+interaction score; **Pair Viewer** looks up a specific pair by protein id;
+**Coabundance**/**Cofractionation**/**Phyloprofiling** rank pairs by each
+external association-score source; and **Unified Ranking** combines all
+sources into one table. Selecting a row anywhere shows that pair's AF3
+structure when one has been predicted.
 
 ## Data layout
 
@@ -20,9 +23,14 @@ data/
 ├── report_file.tsv        # <pool_name>\t<protein_1>_<protein_2>_..._<protein_n>
 ├── recap_set0_pairs.tsv    # per-pair AF3 interaction scores (see below)
 ├── OMAfiltered_..._annotated.fa  # protein annotations (see below)
+├── other_data_sources/      # optional external association-score matrices (see below)
+│   ├── coabundance/latest_coabundance_matrix.csv
+│   ├── cofractionation/latest_cofrac_matrix.csv
+│   └── phyloprofiling/latest_phyloprofiling_matrix.csv   # not provided yet
 ├── pools/                   # <pool_name>.fcz, one pooled AF3 prediction per pool
 ├── structures/               # generated: <pool_name>.cif, decompressed by build_data.py
-└── index/                     # generated: pools.parquet, pairs.parquet, protein_annotations.parquet
+└── index/                     # generated: pools.parquet, pairs.parquet,
+                                #            protein_annotations.parquet, universe_scores.parquet
 ```
 
 By default the app looks for `data/` as a sibling of this repo checkout
@@ -51,6 +59,42 @@ annotations. `scripts/build_data.py` parses this into
 `data/index/protein_annotations.parquet` and reports any website protein id
 missing a FASTA match (currently: none, 2145/2145 matched). Override its path
 with `EUKARYOMA_FASTA_FILE`.
+
+## External data sources and the universe table
+
+Beyond the AF3 pool structures, three optional sources give an association
+score for arbitrary protein pairs (not just ones AF3 happened to pool
+together): **coabundance**, **cofractionation**, and **phylogenetic
+profiling** (HogProf; no file yet). Each ships as a dense protein x protein
+correlation matrix CSV, but with different id conventions:
+
+- coabundance row/column labels are FASTA-header style, e.g.
+  `"XP_004340666.2,4-aminobutyrate..."`.
+- cofractionation labels are a bare NCBI accession with no `XP_` prefix, e.g.
+  `"004340666.2"`, and some labels are `;`-joined groups of proteins the
+  experiment couldn't distinguish, e.g. `"004340769.1;004346401.1"` -- the
+  group's row/column score applies to every member id.
+
+`eukaryoma_ppi.external_scores.normalize_external_id` converts both to the
+website's id format, the same way as the FASTA annotations. Coverage isn't
+complete: coabundance covers 2139/2145 website proteins, cofractionation
+covers all 2145/2145.
+
+`scripts/build_data.py` builds **`data/index/universe_scores.parquet`**: one
+row for every possible pair among the website's proteins (~2.3M for 2145
+proteins, since these are dense matrices, not just the 138,295 pairs AF3
+happened to pool), with a score column per source (`NaN` where a source
+doesn't cover that pair) plus a `unified_score` combining whichever sources
+have data for that pair (`eukaryoma_ppi.external_scores.compute_unified_score`
+-- currently the mean percentile rank across available sources; a
+placeholder documented as easy to swap for a different combination method
+later). The home page's "Data source coverage" section summarizes how many
+pairs each source (and combination of sources) covers.
+
+Override source file paths with `EUKARYOMA_COABUNDANCE_FILE`,
+`EUKARYOMA_COFRACTIONATION_FILE`, `EUKARYOMA_PHYLOPROFILING_FILE`. Drop a
+phyloprofiling matrix at the configured path (same CSV format) and re-run
+`scripts/build_data.py` to populate that source everywhere it's used.
 
 ## The `.fcz` format and `bin/foldcomp`
 
@@ -81,10 +125,12 @@ python scripts/build_data.py
 ```
 
 This decompresses every pool in `data/pools/*.fcz` to `data/structures/*.cif`
-via `bin/foldcomp`, then builds `data/index/pools.parquet` and
+via `bin/foldcomp`, builds `data/index/pools.parquet` and
 `data/index/pairs.parquet` from `report_file.tsv` (restricted to pools that
-actually have a structure on disk). Re-run with `--force` to redo
-decompression, or `--skip-decompress` to only rebuild the index.
+actually have a structure on disk), parses protein annotations, and builds
+`data/index/universe_scores.parquet` from whichever external data sources are
+present (see above), printing a coverage summary. Re-run with `--force` to
+redo decompression, or `--skip-decompress` to only rebuild the indexes.
 
 ## Run locally
 

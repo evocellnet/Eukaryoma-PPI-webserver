@@ -52,3 +52,17 @@ def load_annotations():
 def missing_protein_ids(protein_ids, annotations_df):
     """Website protein ids with no matching FASTA header, if any."""
     return set(protein_ids) - set(annotations_df["protein_id"])
+
+
+def attach_annotations(df):
+    """Left-join annotation_a/annotation_b onto a frame with protein_a/protein_b."""
+    protein_annotations = load_annotations()[["protein_id", "annotation"]]
+    return df.merge(
+        protein_annotations.rename(columns={"protein_id": "protein_a", "annotation": "annotation_a"}),
+        on="protein_a",
+        how="left",
+    ).merge(
+        protein_annotations.rename(columns={"protein_id": "protein_b", "annotation": "annotation_b"}),
+        on="protein_b",
+        how="left",
+    )

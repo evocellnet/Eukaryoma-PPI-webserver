@@ -112,6 +112,23 @@ def attach_scores(pairs_df):
     return merged.drop(columns=["protein_lo", "protein_hi"])
 
 
+def collapse_best_per_pair(pairs_df):
+    """One row per (protein_a, protein_b) pair, keeping the pool occurrence
+    with the highest corrected_chain_pair_iptm (a small number of pairs
+    co-occur in more than one pool). Also normalizes protein_a/protein_b to
+    (min, max) order, matching the convention used across all pair tables.
+    Used to fold the per-pool AF3 pairs index into the universe table, which
+    has exactly one row per pair.
+    """
+    df = pairs_df.copy()
+    df["protein_a"], df["protein_b"] = (
+        df[["protein_a", "protein_b"]].min(axis=1),
+        df[["protein_a", "protein_b"]].max(axis=1),
+    )
+    df = df.sort_values("corrected_chain_pair_iptm", ascending=False)
+    return df.drop_duplicates(subset=["protein_a", "protein_b"], keep="first").reset_index(drop=True)
+
+
 def save_index(pools_df, pairs_df):
     POOLS_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     pools_df.to_parquet(POOLS_INDEX_FILE, index=False)

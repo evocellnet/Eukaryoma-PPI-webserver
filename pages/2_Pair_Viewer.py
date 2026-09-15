@@ -1,7 +1,7 @@
 import streamlit as st
 
-from eukaryoma_ppi import index, ui
-from eukaryoma_ppi.config import PAIRS_INDEX_FILE, POOLS_INDEX_FILE
+from eukaryoma_ppi import external_scores, index, ui
+from eukaryoma_ppi.config import PAIRS_INDEX_FILE, POOLS_INDEX_FILE, UNIVERSE_INDEX_FILE
 
 st.set_page_config(page_title="Pair Viewer - Eukaryoma PPI", page_icon="🧬", layout="wide")
 st.title("Protein Pair Viewer")
@@ -19,6 +19,11 @@ def get_pairs_index():
 @st.cache_data
 def get_protein_options(_pairs_df):
     return sorted(set(_pairs_df["protein_a"]) | set(_pairs_df["protein_b"]))
+
+
+@st.cache_data
+def get_universe_for_pair_viewer():
+    return external_scores.load_universe()
 
 
 pairs_df = get_pairs_index()
@@ -49,4 +54,20 @@ if len(matches) > 1:
 else:
     row = matches.iloc[0]
 
-ui.render_pair_detail(row, protein_a, protein_b)
+score_fields = [("corrected_chain_pair_iptm", "AF3 pool ipTM (this pool)")]
+
+if UNIVERSE_INDEX_FILE.exists():
+    protein_lo, protein_hi = min(protein_a, protein_b), max(protein_a, protein_b)
+    universe_df = get_universe_for_pair_viewer()
+    universe_match = universe_df[
+        (universe_df["protein_a"] == protein_lo) & (universe_df["protein_b"] == protein_hi)
+    ]
+    if not universe_match.empty:
+        universe_row = universe_match.iloc[0]
+        for col, label in external_scores.ALL_SOURCE_LABELS.items():
+            if col != "corrected_chain_pair_iptm":
+                row[col] = universe_row[col]
+                score_fields.append((col, label))
+
+ui.render_scores(row, score_fields)
+ui.render_structure_if_available(row, protein_a, protein_b)

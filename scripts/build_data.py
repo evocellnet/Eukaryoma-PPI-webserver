@@ -17,6 +17,10 @@ It:
   3. Parses protein annotations from the FASTA headers into
      data/index/protein_annotations.parquet, and reports whether every
      website protein id has a matching FASTA entry.
+  4. Builds data/index/universe_scores.parquet -- every possible pair among
+     the website's proteins, with a score column per optional external
+     source (coabundance/cofractionation/phyloprofiling) when its file is
+     present, plus the AF3 pool iptm and a combined unified_score.
 
 The Streamlit app only ever reads data/structures/ and data/index/; it does
 not depend on foldcomp or the raw .fcz files.
@@ -29,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from eukaryoma_ppi import annotations, index
+from eukaryoma_ppi import annotations, external_scores, index
 from eukaryoma_ppi.config import FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
 from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_pool
 
@@ -108,6 +112,22 @@ def main():
             print(f"  All {len(website_ids)} website protein ids matched a FASTA header ({len(annotations_df)} total).")
     else:
         print(f"  [WARN] FASTA_FILE not found at {FASTA_FILE}; skipping protein annotations.")
+
+    print("Building the full pair universe (AF3 + external scores)...")
+    website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
+    for source_name, (path, _col) in external_scores.SOURCES.items():
+        print(f"  {source_name}: {'found ' + str(path) if path.exists() else 'NOT FOUND, skipping'}")
+    universe_df = external_scores.build_universe(website_ids, pairs_df)
+    external_scores.save_universe(universe_df)
+    print(f"  Universe has {len(universe_df):,} possible pairs among {len(website_ids)} proteins.")
+
+    pattern_counts, n_sources_counts = external_scores.source_presence_summary(universe_df)
+    print("  Pairs by number of sources present:")
+    for n, count in n_sources_counts.items():
+        print(f"    {n} source(s): {count:,}")
+    print("  Pairs by exact combination of sources present:")
+    for _, row in pattern_counts.iterrows():
+        print(f"    {row['sources_present']}: {row['n_pairs']:,}")
 
 
 if __name__ == "__main__":

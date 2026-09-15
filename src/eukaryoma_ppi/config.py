@@ -31,6 +31,28 @@ FASTA_FILE = Path(
     )
 )
 
+# Optional external association-score sources. Each is a dense protein x
+# protein correlation matrix CSV; ids need normalizing to the website's id
+# format (see eukaryoma_ppi.external_scores). Phyloprofiling has no file yet
+# -- every code path treats a missing file as "source not available".
+OTHER_DATA_SOURCES_DIR = Path(os.environ.get("EUKARYOMA_OTHER_DATA_SOURCES_DIR", DATA_DIR / "other_data_sources"))
+COABUNDANCE_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_COABUNDANCE_FILE", OTHER_DATA_SOURCES_DIR / "coabundance" / "latest_coabundance_matrix.csv"
+    )
+)
+COFRACTIONATION_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_COFRACTIONATION_FILE", OTHER_DATA_SOURCES_DIR / "cofractionation" / "latest_cofrac_matrix.csv"
+    )
+)
+PHYLOPROFILING_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_PHYLOPROFILING_FILE",
+        OTHER_DATA_SOURCES_DIR / "phyloprofiling" / "latest_phyloprofiling_matrix.csv",
+    )
+)
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
@@ -38,6 +60,10 @@ INDEX_DIR = Path(os.environ.get("EUKARYOMA_INDEX_DIR", DATA_DIR / "index"))
 PAIRS_INDEX_FILE = INDEX_DIR / "pairs.parquet"
 POOLS_INDEX_FILE = INDEX_DIR / "pools.parquet"
 ANNOTATIONS_INDEX_FILE = INDEX_DIR / "protein_annotations.parquet"
+# One row per possible pair among the website's proteins (~2.3M for 2145
+# proteins), with a score column per source (NaN where that source doesn't
+# cover the pair) plus a combined unified_score. See eukaryoma_ppi.external_scores.
+UNIVERSE_INDEX_FILE = INDEX_DIR / "universe_scores.parquet"
 
 # Only needed for scripts/build_data.py (local/HPC preprocessing), never at
 # Streamlit runtime. This is a custom internal build of foldcomp that reads
