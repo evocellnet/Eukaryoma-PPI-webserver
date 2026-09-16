@@ -149,6 +149,30 @@ def build_universe(website_ids, af3_pairs_df):
     return universe
 
 
+def add_presence_columns(df):
+    """Add n_sources_present (int) and sources_present (str label) columns,
+    describing which of ALL_SOURCE_LABELS' sources back each pair. Fully
+    vectorized (no per-row Python loop) so it stays fast at ~2.3M rows: each
+    row's presence pattern is packed into a bitmask, then only the handful of
+    *distinct* bitmasks actually observed (at most 2**4) are turned into
+    "A + B + C" labels and mapped back.
+    """
+    labels = {col: name for col, name in ALL_SOURCE_LABELS.items() if col in df.columns}
+    names = list(labels.values())
+    present = np.column_stack([df[col].notna().to_numpy() for col in labels])
+
+    df = df.copy()
+    df["n_sources_present"] = present.sum(axis=1)
+
+    weights = 1 << np.arange(len(names))
+    bitmask = present.astype(np.int64) @ weights
+    label_for_bitmask = {
+        b: (" + ".join(name for i, name in enumerate(names) if b & (1 << i)) or "none") for b in np.unique(bitmask)
+    }
+    df["sources_present"] = pd.Series(bitmask).map(label_for_bitmask).to_numpy()
+    return df
+
+
 def source_presence_summary(universe_df):
     """Cross-source coverage of the pair universe, for the recap page.
 
@@ -159,21 +183,17 @@ def source_presence_summary(universe_df):
     - n_sources_counts: pair count by how many of the (up to 4) sources are
       present, indexed 0..len(labels).
     """
-    labels = {col: name for col, name in ALL_SOURCE_LABELS.items() if col in universe_df.columns}
-    names = list(labels.values())
-    present = pd.DataFrame({name: universe_df[col].notna() for col, name in labels.items()})
-
-    n_sources_counts = present.sum(axis=1).value_counts().sort_index()
-
-    # Groupby-based (vectorized) combination counts -- there are at most 2**4
-    # distinct combinations, so labeling each combination afterwards is cheap
-    # even though computing the counts scans every one of the ~2.3M rows.
-    pattern_counts = present.value_counts().reset_index(name="n_pairs")
-    pattern_counts["sources_present"] = pattern_counts[names].apply(
-        lambda row: " + ".join(name for name in names if row[name]) or "none", axis=1
+    df = add_presence_columns(universe_df)
+    n_sources_counts = df["n_sources_present"].value_counts().sort_index()
+    pattern_counts = (
+        df["sources_present"]
+        .value_counts()
+        .rename_axis("sources_present")
+        .reset_index(name="n_pairs")
+        .sort_values("n_pairs", ascending=False)
+        .reset_index(drop=True)
     )
-    pattern_counts = pattern_counts[["sources_present", "n_pairs"]].sort_values("n_pairs", ascending=False)
-    return pattern_counts.reset_index(drop=True), n_sources_counts
+    return pattern_counts, n_sources_counts
 
 
 def save_universe(universe_df):

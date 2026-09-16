@@ -25,11 +25,49 @@ def get_universe_for_ranking():
     else:
         universe_df["annotation_a"] = ""
         universe_df["annotation_b"] = ""
-    return universe_df
+    return external_scores.add_presence_columns(universe_df)
+
+
+@st.cache_data
+def get_pattern_counts(_universe_df):
+    pattern_counts, _n_sources_counts = external_scores.source_presence_summary(_universe_df)
+    return pattern_counts
 
 
 universe_df = get_universe_for_ranking()
 st.caption(f"{len(universe_df):,} possible pairs among all website proteins.")
+
+max_sources = int(universe_df["n_sources_present"].max())
+pattern_counts = get_pattern_counts(universe_df)
+counts_by_pattern = pattern_counts.set_index("sources_present")["n_pairs"]
+
+st.subheader("Filter by data source coverage")
+filter_mode = st.radio(
+    "Filter by data source coverage",
+    ["All pairs", "Minimum number of sources", "Exact combination of sources"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+if filter_mode == "Minimum number of sources":
+    min_sources = st.selectbox("At least this many sources present", list(range(1, max_sources + 1)))
+    universe_df = universe_df[universe_df["n_sources_present"] >= min_sources]
+elif filter_mode == "Exact combination of sources":
+    combo_options = pattern_counts["sources_present"].tolist()
+    selected_combos = st.multiselect(
+        "Sources present",
+        combo_options,
+        default=combo_options,
+        format_func=lambda combo: f"{combo} ({counts_by_pattern[combo]:,})",
+    )
+    universe_df = universe_df[universe_df["sources_present"].isin(selected_combos)]
+
+if universe_df.empty:
+    st.info("No pairs match this filter.")
+    st.stop()
+
+if filter_mode != "All pairs":
+    st.caption(f"{len(universe_df):,} pairs match this filter.")
 
 score_cols = list(external_scores.ALL_SOURCE_LABELS.items())
 
