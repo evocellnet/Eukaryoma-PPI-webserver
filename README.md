@@ -9,9 +9,11 @@ specific protein pair contained in a pool. Loosely modelled on
 Ways to pick a pair: **Browse Pairs** ranks AF3 pool pairs by predicted
 interaction score; **Pair Viewer** looks up a specific pair by protein id;
 **Coabundance**/**Cofractionation**/**Phyloprofiling** rank pairs by each
-external association-score source; and **Unified Ranking** combines all
-sources into one table. Selecting a row anywhere shows that pair's AF3
-structure when one has been predicted.
+external association-score source; **Unified Ranking** combines all sources
+into one table; and **Annotations** checks all of the above against known
+true-positive interactions. Selecting a row anywhere shows that pair's AF3
+structure when one has been predicted. Pairs known to be true positives
+(see below) are highlighted in every table.
 
 ## Data layout
 
@@ -26,11 +28,15 @@ data/
 ├── other_data_sources/      # optional external association-score matrices (see below)
 │   ├── coabundance/latest_coabundance_matrix.csv
 │   ├── cofractionation/latest_cofrac_matrix.csv
-│   └── phyloprofiling/latest_phyloprofiling_matrix.csv   # not provided yet
+│   ├── phyloprofiling/latest_phyloprofiling_matrix.csv   # not provided yet
+│   └── annotations/          # true-positive complex annotations (see below)
+│       ├── corum/corum_annotations.tsv
+│       └── marcotte/marcotte_annotations.txt
 ├── pools/                   # <pool_name>.fcz, one pooled AF3 prediction per pool
 ├── structures/               # generated: <pool_name>.cif, decompressed by build_data.py
 └── index/                     # generated: pools.parquet, pairs.parquet,
-                                #            protein_annotations.parquet, universe_scores.parquet
+                                #            protein_annotations.parquet, universe_scores.parquet,
+                                #            true_positive_pairs.parquet
 ```
 
 By default the app looks for `data/` as a sibling of this repo checkout
@@ -96,6 +102,40 @@ Override source file paths with `EUKARYOMA_COABUNDANCE_FILE`,
 phyloprofiling matrix at the configured path (same CSV format) and re-run
 `scripts/build_data.py` to populate that source everywhere it's used.
 
+## True-positive annotations (CORUM / Marcotte)
+
+**CORUM** and **Marcotte** list human protein complexes together with each
+member's Capsaspora ortholog(s) (`;`-joined when a human gene has several
+paralogs, `N/A` when it has none), e.g.:
+
+```
+corumID  category                          ...  Capsaspora
+4        Multisubunit ACTR coactivator...       XP_004345483.1_595528;XP_004364839.1_595528
+```
+
+Two Capsaspora proteins are treated as a **known true-positive interaction**
+if they co-occur as members of the same group: CORUM groups by `corumID`
+(one complex), Marcotte by `category` (a coarser functional module). Ortholog
+ids carry a trailing `_<taxon id>` the website's ids don't have, so
+`eukaryoma_ppi.complex_annotations` strips that before normalizing them the
+same way as the FASTA annotations. Parsing follows the approach in
+`/Users/spascare/data/work/beltrao/combine_assoc_scores/Eukaryoma_PPI_analysis/src/cofrac_coab9partial_tmp_test.py`,
+except a pair counts as true-positive if it shares membership in *any* group
+(that script keeps only one category per protein and can miss some
+co-membership pairs for proteins in more than one complex).
+
+`scripts/build_data.py` builds `data/index/true_positive_pairs.parquet`
+(`corum_tp`/`marcotte_tp` booleans, restricted to website proteins: 7,185 /
+2,996 pairs respectively, 8,935 flagged by either, 1,246 by both) and merges
+it into both `pairs.parquet` and `universe_scores.parquet`. Every pair table
+in the app highlights true-positive rows (green/blue/purple for
+CORUM/Marcotte/both); the **Annotations** page plots true-positive rate by
+score quantile for each score, and lets you brush-select or threshold-filter
+for pairs where a score and the annotation disagree (high score without
+annotation, or low score despite it) -- candidates for annotation false
+negatives or under-ranked real interactions. Override file paths with
+`EUKARYOMA_CORUM_FILE` / `EUKARYOMA_MARCOTTE_FILE`.
+
 ## The `.fcz` format and `bin/foldcomp`
 
 The pool structures are stored with [foldcomp](https://github.com/steineggerlab/foldcomp)
@@ -127,10 +167,11 @@ python scripts/build_data.py
 This decompresses every pool in `data/pools/*.fcz` to `data/structures/*.cif`
 via `bin/foldcomp`, builds `data/index/pools.parquet` and
 `data/index/pairs.parquet` from `report_file.tsv` (restricted to pools that
-actually have a structure on disk), parses protein annotations, and builds
-`data/index/universe_scores.parquet` from whichever external data sources are
-present (see above), printing a coverage summary. Re-run with `--force` to
-redo decompression, or `--skip-decompress` to only rebuild the indexes.
+actually have a structure on disk), parses protein annotations and CORUM/
+Marcotte true-positive flags, and builds `data/index/universe_scores.parquet`
+from whichever external data sources are present (see above), printing a
+coverage summary. Re-run with `--force` to redo decompression, or
+`--skip-decompress` to only rebuild the indexes.
 
 ## Run locally
 

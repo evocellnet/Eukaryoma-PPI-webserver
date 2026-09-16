@@ -70,4 +70,5 @@ if UNIVERSE_INDEX_FILE.exists():
                 score_fields.append((col, label))
 
 ui.render_scores(row, score_fields)
+ui.render_true_positive_badges(row)
 ui.render_structure_if_available(row, protein_a, protein_b)

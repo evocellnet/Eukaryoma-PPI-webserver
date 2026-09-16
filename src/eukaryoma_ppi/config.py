@@ -53,6 +53,20 @@ PHYLOPROFILING_FILE = Path(
     )
 )
 
+# "True positive" interaction annotations: two proteins co-occurring in the
+# same complex/category are treated as a known-true interaction. See
+# eukaryoma_ppi.complex_annotations for how these files are parsed.
+CORUM_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_CORUM_FILE", OTHER_DATA_SOURCES_DIR / "annotations" / "corum" / "corum_annotations.tsv"
+    )
+)
+MARCOTTE_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_MARCOTTE_FILE", OTHER_DATA_SOURCES_DIR / "annotations" / "marcotte" / "marcotte_annotations.txt"
+    )
+)
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
@@ -64,6 +78,9 @@ ANNOTATIONS_INDEX_FILE = INDEX_DIR / "protein_annotations.parquet"
 # proteins), with a score column per source (NaN where that source doesn't
 # cover the pair) plus a combined unified_score. See eukaryoma_ppi.external_scores.
 UNIVERSE_INDEX_FILE = INDEX_DIR / "universe_scores.parquet"
+# Sparse: only pairs flagged true-positive by CORUM and/or Marcotte complex
+# co-membership. See eukaryoma_ppi.complex_annotations.
+TRUE_POSITIVE_INDEX_FILE = INDEX_DIR / "true_positive_pairs.parquet"
 
 # Only needed for scripts/build_data.py (local/HPC preprocessing), never at
 # Streamlit runtime. This is a custom internal build of foldcomp that reads

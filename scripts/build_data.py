@@ -17,7 +17,10 @@ It:
   3. Parses protein annotations from the FASTA headers into
      data/index/protein_annotations.parquet, and reports whether every
      website protein id has a matching FASTA entry.
-  4. Builds data/index/universe_scores.parquet -- every possible pair among
+  4. Parses CORUM/Marcotte complex co-membership into
+     data/index/true_positive_pairs.parquet (corum_tp/marcotte_tp flags,
+     merged into both pairs.parquet and universe_scores.parquet).
+  5. Builds data/index/universe_scores.parquet -- every possible pair among
      the website's proteins, with a score column per optional external
      source (coabundance/cofractionation/phyloprofiling) when its file is
      present, plus the AF3 pool iptm and a combined unified_score.
@@ -33,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from eukaryoma_ppi import annotations, external_scores, index
+from eukaryoma_ppi import annotations, complex_annotations, external_scores, index
 from eukaryoma_ppi.config import FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
 from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_pool
 
@@ -94,7 +97,6 @@ def main():
 
     print("Building pool/pair index...")
     pools_df, pairs_df = index.build_index(available)
-    index.save_index(pools_df, pairs_df)
     print(f"Indexed {len(pools_df)} pools, {len(pairs_df)} protein pair occurrences.")
 
     if FASTA_FILE.exists():
@@ -113,11 +115,28 @@ def main():
     else:
         print(f"  [WARN] FASTA_FILE not found at {FASTA_FILE}; skipping protein annotations.")
 
+    print("Parsing CORUM/Marcotte true-positive complex co-membership...")
+    website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
+    for flag_col, (path, _group_col) in complex_annotations.SOURCES.items():
+        print(f"  {flag_col}: {'found ' + str(path) if path.exists() else 'NOT FOUND, skipping'}")
+    tp_flags_df = complex_annotations.build_true_positive_flags(website_ids)
+    complex_annotations.save_true_positive_flags(tp_flags_df)
+    for flag_col in complex_annotations.FLAG_COLUMNS:
+        print(f"  {flag_col}: {int(tp_flags_df[flag_col].sum()):,} pairs")
+    n_either = len(tp_flags_df[tp_flags_df[complex_annotations.FLAG_COLUMNS].any(axis=1)])
+    n_both = len(tp_flags_df[tp_flags_df[complex_annotations.FLAG_COLUMNS].all(axis=1)])
+    print(f"  either: {n_either:,} pairs, both: {n_both:,} pairs")
+
+    pairs_df = complex_annotations.attach_true_positive_flags(pairs_df)
+    index.save_index(pools_df, pairs_df)
+    print("Saved data/index/pairs.parquet with true-positive flags attached.")
+
     print("Building the full pair universe (AF3 + external scores)...")
     website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
     for source_name, (path, _col) in external_scores.SOURCES.items():
         print(f"  {source_name}: {'found ' + str(path) if path.exists() else 'NOT FOUND, skipping'}")
     universe_df = external_scores.build_universe(website_ids, pairs_df)
+    universe_df = complex_annotations.attach_true_positive_flags(universe_df)
     external_scores.save_universe(universe_df)
     print(f"  Universe has {len(universe_df):,} possible pairs among {len(website_ids)} proteins.")
 
