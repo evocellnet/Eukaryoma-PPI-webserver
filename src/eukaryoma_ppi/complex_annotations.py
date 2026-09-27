@@ -38,7 +38,10 @@ FLAG_COLUMNS = list(SOURCES.keys())
 
 
 def _member_website_ids(cell):
-    """"XP_004345483.1_595528;XP_004364839.1_595528" -> ["xp0043454831", "xp0043648391"]."""
+    """"XP_004345483.1_595528;XP_004364839.1_595528" -> ["xp0043454831", "xp0043648391"].
+
+    normalize_external_id already strips the trailing "_<taxon id>".
+    """
     if not cell or cell == "N/A":
         return []
     ids = []
@@ -46,9 +49,7 @@ def _member_website_ids(cell):
         raw = raw.strip()
         if not raw or raw == "N/A":
             continue
-        parts = raw.split("_")
-        ncbi_id = "_".join(parts[:2]) if len(parts) >= 2 else raw
-        ids.append(normalize_external_id(ncbi_id))
+        ids.append(normalize_external_id(raw))
     return ids
 
 

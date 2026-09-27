@@ -49,7 +49,7 @@ COFRACTIONATION_FILE = Path(
 PHYLOPROFILING_FILE = Path(
     os.environ.get(
         "EUKARYOMA_PHYLOPROFILING_FILE",
-        OTHER_DATA_SOURCES_DIR / "phyloprofiling" / "latest_phyloprofiling_matrix.csv",
+        OTHER_DATA_SOURCES_DIR / "phyloprofiling" / "Capsaspora_hogprof_interactions_with_zeros.parquet",
     )
 )
 

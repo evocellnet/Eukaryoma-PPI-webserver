@@ -28,7 +28,7 @@ data/
 ├── other_data_sources/      # optional external association-score matrices (see below)
 │   ├── coabundance/latest_coabundance_matrix.csv
 │   ├── cofractionation/latest_cofrac_matrix.csv
-│   ├── phyloprofiling/latest_phyloprofiling_matrix.csv   # not provided yet
+│   ├── phyloprofiling/Capsaspora_hogprof_interactions_with_zeros.parquet
 │   └── annotations/          # true-positive complex annotations (see below)
 │       ├── corum/corum_annotations.tsv
 │       └── marcotte/marcotte_annotations.txt
@@ -68,23 +68,33 @@ with `EUKARYOMA_FASTA_FILE`.
 
 ## External data sources and the universe table
 
-Beyond the AF3 pool structures, three optional sources give an association
+Beyond the AF3 pool structures, four optional sources give an association
 score for arbitrary protein pairs (not just ones AF3 happened to pool
 together): **coabundance**, **cofractionation**, and **phylogenetic
-profiling** (HogProf; no file yet). Each ships as a dense protein x protein
-correlation matrix CSV, but with different id conventions:
+profiling** (HogProf) matrices, plus the CORUM/Marcotte true-positive
+annotations (see below). Each of the three score matrices ships as a dense
+protein x protein matrix, but with different formats and id conventions:
 
-- coabundance row/column labels are FASTA-header style, e.g.
+- coabundance (CSV): row/column labels are FASTA-header style, e.g.
   `"XP_004340666.2,4-aminobutyrate..."`.
-- cofractionation labels are a bare NCBI accession with no `XP_` prefix, e.g.
-  `"004340666.2"`, and some labels are `;`-joined groups of proteins the
-  experiment couldn't distinguish, e.g. `"004340769.1;004346401.1"` -- the
-  group's row/column score applies to every member id.
+- cofractionation (CSV): labels are a bare NCBI accession with no `XP_`
+  prefix, e.g. `"004340666.2"`, and some labels are `;`-joined groups of
+  proteins the experiment couldn't distinguish, e.g.
+  `"004340769.1;004346401.1"` -- the group's row/column score applies to
+  every member id.
+- phyloprofiling / HogProf (parquet): labels are FASTA-header-style
+  accessions with an extra trailing `_<taxon id>`, e.g.
+  `"XP_004349908.1_595528"`. Unlike the other two, **this matrix is not
+  symmetric** (`matrix[A, B]` can differ from `matrix[B, A]`); we always take
+  the value at `(protein_lo, protein_hi)` in alphabetical id order, matching
+  the analysis this app's methodology was validated against. A `0.0` score
+  is a real measurement (no phylogenetic co-evolution signal detected), not
+  a missing value -- 98% of covered pairs score exactly `0.0`.
 
-`eukaryoma_ppi.external_scores.normalize_external_id` converts both to the
-website's id format, the same way as the FASTA annotations. Coverage isn't
-complete: coabundance covers 2139/2145 website proteins, cofractionation
-covers all 2145/2145.
+`eukaryoma_ppi.external_scores.normalize_external_id` converts all three id
+formats to the website's id format, the same way as the FASTA annotations.
+Coverage isn't complete: coabundance covers 2139/2145 website proteins,
+cofractionation all 2145/2145, phyloprofiling 2003/2145.
 
 `scripts/build_data.py` builds **`data/index/universe_scores.parquet`**: one
 row for every possible pair among the website's proteins (~2.3M for 2145
@@ -98,9 +108,10 @@ later). The home page's "Data source coverage" section summarizes how many
 pairs each source (and combination of sources) covers.
 
 Override source file paths with `EUKARYOMA_COABUNDANCE_FILE`,
-`EUKARYOMA_COFRACTIONATION_FILE`, `EUKARYOMA_PHYLOPROFILING_FILE`. Drop a
-phyloprofiling matrix at the configured path (same CSV format) and re-run
-`scripts/build_data.py` to populate that source everywhere it's used.
+`EUKARYOMA_COFRACTIONATION_FILE`, `EUKARYOMA_PHYLOPROFILING_FILE`. Any of the
+three can be swapped for an updated matrix (CSV or parquet, same row/column
+format) at the configured path -- just re-run `scripts/build_data.py` to
+pick it up everywhere it's used.
 
 ## True-positive annotations (CORUM / Marcotte)
 

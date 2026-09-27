@@ -2,18 +2,24 @@
 phyloprofiling), combined with the AF3 pool data into one "universe" table
 covering every possible pair among the website's proteins.
 
-Each source ships as a dense protein x protein correlation matrix CSV. Row/
-column labels come in different formats:
+Each source ships as a dense protein x protein score matrix (CSV or
+parquet). Row/column labels come in different formats:
 
 - coabundance: FASTA-header style, e.g. "XP_004340666.2,4-aminobutyrate...".
 - cofractionation: bare NCBI accession with no "XP_" prefix, e.g.
   "004340666.2", and some labels are semicolon-joined groups of
   indistinguishable proteins, e.g. "004340769.1;004346401.1" -- the group's
   row/column applies to every member id.
+- phyloprofiling: FASTA-header-style accession plus a trailing "_<taxon id>"
+  the other sources don't have, e.g. "XP_004349908.1_595528". Also, unlike
+  the other two, this matrix is *not* symmetric (matrix[A, B] can differ
+  from matrix[B, A]); we always take the value at (protein_lo, protein_hi)
+  in alphabetical order, matching the analysis this app's methodology was
+  validated against.
 
-Both normalize to the website's id format (see normalize_external_id).
-Phyloprofiling has no file yet; every function here treats a missing file as
-"this source has no data" rather than an error.
+All normalize to the website's id format (see normalize_external_id).
+Phyloprofiling had no file for a while; every function here still treats a
+missing file as "this source has no data" rather than an error.
 """
 
 import csv
@@ -47,8 +53,14 @@ ALL_SOURCE_LABELS = {
 
 
 def normalize_external_id(raw_label):
-    """"XP_004340666.2,annotation..." or "004340666.2" -> "xp0043406662"."""
+    """"XP_004340666.2,annotation..." -> "xp0043406662"
+    "004340666.2" -> "xp0043406662"
+    "XP_004349908.1_595528" -> "xp0043499081" (trailing "_<taxon id>" stripped)
+    """
     s = raw_label.split(",")[0].strip()
+    parts = s.split("_")
+    if len(parts) >= 3 and parts[0].lower() == "xp":
+        s = "_".join(parts[:2])
     s = s.replace(".", "").replace("_", "").lower()
     if not s.startswith("xp"):
         s = "xp" + s
@@ -62,7 +74,10 @@ def _label_to_member_ids(label):
 
 
 def load_correlation_matrix(path):
-    """Read a square protein x protein correlation matrix CSV as-is (original labels)."""
+    """Read a square protein x protein score matrix (CSV or parquet) as-is
+    (original labels)."""
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
     with open(path, newline="") as fh:
         header = next(csv.reader(fh))
     labels = header[1:]
@@ -75,6 +90,11 @@ def build_source_pairs(path, website_ids, score_col):
     """One row per pair among website_ids with that source's score, or None if
     the source file doesn't exist. Pairs where either protein isn't covered by
     this source are simply absent (not NaN rows) -- the caller left-joins.
+
+    covered is sorted alphabetically before extraction so that, for sources
+    whose matrix isn't symmetric (phyloprofiling), we deterministically take
+    matrix[protein_lo, protein_hi] rather than whichever of the two array
+    positions happened to come first.
     """
     if not path.exists():
         return None
@@ -88,19 +108,15 @@ def build_source_pairs(path, website_ids, score_col):
         for member_id in _label_to_member_ids(label):
             label_for_id.setdefault(member_id, label)
 
-    covered = [wid for wid in website_ids if wid in label_for_id]
+    covered = sorted(wid for wid in website_ids if wid in label_for_id)
     matrix_labels = [label_for_id[wid] for wid in covered]
     sub = matrix.reindex(index=matrix_labels, columns=matrix_labels).to_numpy()
 
     n = len(covered)
     iu = np.triu_indices(n, k=1)
     covered_arr = np.array(covered)
-    left, right = covered_arr[iu[0]], covered_arr[iu[1]]
-    is_left_smaller = left <= right
-    protein_lo = np.where(is_left_smaller, left, right)
-    protein_hi = np.where(is_left_smaller, right, left)
 
-    return pd.DataFrame({"protein_a": protein_lo, "protein_b": protein_hi, score_col: sub[iu]})
+    return pd.DataFrame({"protein_a": covered_arr[iu[0]], "protein_b": covered_arr[iu[1]], score_col: sub[iu]})
 
 
 def build_all_pairs_universe(website_ids):
