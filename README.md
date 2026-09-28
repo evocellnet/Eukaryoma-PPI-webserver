@@ -84,12 +84,18 @@ protein x protein matrix, but with different formats and id conventions:
   every member id.
 - phyloprofiling / HogProf (parquet): labels are FASTA-header-style
   accessions with an extra trailing `_<taxon id>`, e.g.
-  `"XP_004349908.1_595528"`. Unlike the other two, **this matrix is not
-  symmetric** (`matrix[A, B]` can differ from `matrix[B, A]`); we always take
-  the value at `(protein_lo, protein_hi)` in alphabetical id order, matching
-  the analysis this app's methodology was validated against. A `0.0` score
-  is a real measurement (no phylogenetic co-evolution signal detected), not
-  a missing value -- 98% of covered pairs score exactly `0.0`.
+  `"XP_004349908.1_595528"`. A `0.0` score is mostly a real measurement (no
+  phylogenetic co-evolution signal detected) -- 97% of covered pairs score
+  exactly `0.0` -- but the source matrix also writes each pair's score in
+  only *one* of the `(A, B)`/`(B, A)` directions, leaving the other at that
+  same default `0.0`, i.e. indistinguishable from a real zero without
+  cross-checking the mirror. `build_source_pairs` (`symmetrize_zero_gaps`)
+  fills each `0.0` from its mirror position whenever the mirror is non-zero
+  (13,229 pairs affected among the website's proteins as of the current
+  file; verified no pair had disagreeing non-zero values on both sides, so
+  this never overwrites real data) -- the other two sources are already
+  symmetric correlation matrices where a literal `0.0` is a genuine
+  measurement, so they're left alone.
 
 `eukaryoma_ppi.external_scores.normalize_external_id` converts all three id
 formats to the website's id format, the same way as the FASTA annotations.

@@ -133,7 +133,7 @@ def main():
 
     print("Building the full pair universe (AF3 + external scores)...")
     website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
-    for source_name, (path, _col) in external_scores.SOURCES.items():
+    for source_name, (path, _col, _sym) in external_scores.SOURCES.items():
         print(f"  {source_name}: {'found ' + str(path) if path.exists() else 'NOT FOUND, skipping'}")
     universe_df = external_scores.build_universe(website_ids, pairs_df)
     universe_df = complex_annotations.attach_true_positive_flags(universe_df)

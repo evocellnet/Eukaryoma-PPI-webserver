@@ -34,13 +34,18 @@ from eukaryoma_ppi.config import (
     UNIVERSE_INDEX_FILE,
 )
 
-# display name -> (file path, score column name)
+# display name -> (file path, score column name, symmetrize-zero-gaps flag)
+# phyloprofiling's matrix has each pair's score written in only one of the
+# two (A,B)/(B,A) directions, leaving the other at the default 0 -- treated
+# as a gap to fill from the mirror, not a real "no signal" measurement (see
+# fill_zero_gaps_from_mirror). The other two sources are already symmetric
+# correlation matrices where a literal 0.0 is a real value, so leave them as-is.
 SOURCES = {
-    "coabundance": (COABUNDANCE_FILE, "coabundance_score"),
-    "cofractionation": (COFRACTIONATION_FILE, "cofractionation_score"),
-    "phyloprofiling": (PHYLOPROFILING_FILE, "phyloprofiling_score"),
+    "coabundance": (COABUNDANCE_FILE, "coabundance_score", False),
+    "cofractionation": (COFRACTIONATION_FILE, "cofractionation_score", False),
+    "phyloprofiling": (PHYLOPROFILING_FILE, "phyloprofiling_score", True),
 }
-SCORE_COLUMNS = [col for _path, col in SOURCES.values()]
+SCORE_COLUMNS = [col for _path, col, _sym in SOURCES.values()]
 
 # All four "is this pair backed by this source" columns, AF3 pooling included,
 # in the order the recap page and unified score should present them.
@@ -86,7 +91,18 @@ def load_correlation_matrix(path):
     return df
 
 
-def build_source_pairs(path, website_ids, score_col):
+def fill_zero_gaps_from_mirror(sub):
+    """For a matrix where a pair's score may have been written in only one of
+    the (A,B)/(B,A) directions -- the other left at a default 0, not a real
+    "no signal" measurement -- fill each 0 from its mirror position whenever
+    the mirror is non-zero. Where both sides are non-zero they're expected to
+    already agree (verified for phyloprofiling: 0 conflicts); this doesn't
+    check that, it just prefers whichever side is non-zero.
+    """
+    return np.where(sub == 0, sub.T, sub)
+
+
+def build_source_pairs(path, website_ids, score_col, symmetrize_zero_gaps=False):
     """One row per pair among website_ids with that source's score, or None if
     the source file doesn't exist. Pairs where either protein isn't covered by
     this source are simply absent (not NaN rows) -- the caller left-joins.
@@ -111,6 +127,8 @@ def build_source_pairs(path, website_ids, score_col):
     covered = sorted(wid for wid in website_ids if wid in label_for_id)
     matrix_labels = [label_for_id[wid] for wid in covered]
     sub = matrix.reindex(index=matrix_labels, columns=matrix_labels).to_numpy()
+    if symmetrize_zero_gaps:
+        sub = fill_zero_gaps_from_mirror(sub)
 
     n = len(covered)
     iu = np.triu_indices(n, k=1)
@@ -153,8 +171,8 @@ def build_universe(website_ids, af3_pairs_df):
     ]
     universe = universe.merge(af3_best, on=["protein_a", "protein_b"], how="left")
 
-    for source_name, (path, score_col) in SOURCES.items():
-        source_pairs = build_source_pairs(path, website_ids, score_col)
+    for source_name, (path, score_col, symmetrize_zero_gaps) in SOURCES.items():
+        source_pairs = build_source_pairs(path, website_ids, score_col, symmetrize_zero_gaps)
         if source_pairs is None:
             universe[score_col] = float("nan")
             continue
