@@ -6,6 +6,9 @@ at once (a "pool"); this tool extracts and renders the two chains for any
 specific protein pair contained in a pool. Loosely modelled on
 [mutfunc](https://github.com/jurgjn/mutfunc)'s local-lookup + 3D-viewer UX.
 
+The home page (`app.py`) lists every page with a one-line description and a
+direct link to it -- a good starting point for getting oriented.
+
 Ways to pick a pair: **Browse Pairs** ranks AF3 pool pairs by predicted
 interaction score; **Pair Viewer** looks up a specific pair by protein id *or*
 by matching text in its annotation (e.g. searching "kinase" finds every
@@ -16,13 +19,15 @@ Sources** describes where the CORUM/Marcotte true-positive annotations come
 from and how many complexes/pairs each contributes; and **Annotated Pairs**
 checks the scores against those annotations. Selecting a row anywhere shows
 that pair's AF3 structure when one has been predicted, with a download
-button for the extracted PDB. Pairs known to be true positives (see below)
+button for the extracted PDB and an optional live-fetched reference
+structure from AlphaFold DB. Pairs known to be true positives (see below)
 are highlighted in every table.
 
 **Protein View** flips this around: pick one protein of interest and see
 every interaction it's part of, external database links, its eggNOG-mapper
-functional annotation, and a small interactome graph centered on it (see
-below).
+functional annotation, an interactome graph centered on it with GO-term
+enrichment of whatever's currently in the graph, and a structure comparison
+across every pool the protein was predicted in (see below).
 
 ## Data layout
 
@@ -260,14 +265,72 @@ accordingly: a RefSeq accession gets a direct NCBI Protein link but only
 while a genuine UniProt accession gets direct links to all three.
 
 The interactome graph starts small: a slider sets a unified-score cutoff and
-only partners scoring at or above it are auto-included as nodes (edge
-thickness encodes unified score). Selecting rows in the interactions table
-above adds those specific partners to the graph regardless of score, for
-digging into a lower-confidence interaction of interest without lowering the
-threshold for everyone else. Layout is a plain circular placement (the
-protein of interest at the center, partners spaced evenly around it) computed
-by hand with numpy -- no networkx/graphviz dependency, keeping the app
-pip-installable per `COLLABORATOR_SETUP.md`.
+only partners scoring at or above it are auto-included as nodes (edge color
+marks CORUM/Marcotte true positives, thickness encodes unified score).
+Selecting rows in the interactions table above adds those specific partners
+to the graph regardless of score, for digging into a lower-confidence
+interaction of interest without lowering the threshold for everyone else.
+Layout is a plain circular placement (the protein of interest at the center,
+partners spaced evenly around it) computed by hand with numpy -- no
+networkx/graphviz dependency, keeping the app pip-installable per
+`COLLABORATOR_SETUP.md`.
+
+### GO term enrichment of an interactome
+
+Right under the interactome graph, `eukaryoma_ppi.go_enrichment` tests
+whether any GO term is over-represented among the graph's current proteins,
+against every eggNOG-annotated website protein as background: a plain
+hypergeometric test per term (`scipy`/`goatools`-free -- just Python's
+`math.comb`) with Benjamini-Hochberg FDR correction across all terms tested.
+An adjustable FDR threshold filters the results table; an expander below it
+always shows the simpler fallback -- just the GO terms present in the set
+and how many proteins carry each, no statistics -- for when nothing reaches
+significance (small interactomes often won't) or a plain recap is more
+useful than a test. Terms are linked out to QuickGO for their name/
+definition, since this app doesn't bundle a GO ontology (OBO) file to look
+that up locally.
+
+### Comparing structures across pools
+
+Below that, **"Compare structures across pools"** answers a different
+question: not how a protein interacts, but how *consistently AF3 predicts
+its own fold* across the different pools it was pooled into (each pool has
+a different partner, so a different context). Pick 2-8 of the pools this
+protein has a structure in, and either superpose them (Biopython's
+`Superimposer`, CA-atom RMSD alignment onto the first selected pool, then
+all rendered together in one py3Dmol view, one color per pool) or view them
+side by side, unaligned. A pool is skipped from superposition (with a
+warning, not a crash) if its chain has a different CA count than the
+reference pool's -- `eukaryoma_ppi.structures.superpose_chains_as_pdb`.
+
+### Reference structures from AlphaFold DB
+
+Wherever a pair's AF3 structure is shown (every pair page, Unified Ranking,
+Protein View), an optional **reference structure** dropdown appears
+alongside it when either protein has a human ortholog: a live fetch from
+AlphaFold DB of that ortholog's own solo prediction, for comparing this
+app's AF3 *pair* prediction against a human structure of (presumably) the
+same fold predicted independently. `eukaryoma_ppi.external_structures`
+calls AFDB's prediction API for the current `pdbUrl` rather than guessing
+the file's model-version suffix directly (`AF-<accession>-F1-model_v<N>.pdb`
+-- `N` changes release to release, so a hardcoded version 404s eventually).
+
+The accession comes from CORUM/Marcotte's own `uniprot` column, not
+eggNOG's `seed_ortholog` -- eggNOG's best-hit search spans many reference
+proteomes and is only very rarely an actual human UniProt accession for
+this species, whereas CORUM/Marcotte already curate the human gene each
+Capsaspora ortholog corresponds to (`eukaryoma_ppi.complex_annotations.
+human_uniprot_orthologs`; ~750 of the website's 2,145 proteins have at
+least one, some several when they're the ortholog of multiple human
+paralogs). Any fetch failure (protein has no such ortholog, network error,
+accession not actually in AFDB) is silent/graceful -- this is a nice-to-have
+next to the pair's own structure, not something the rest of the page
+depends on.
+
+A **yeast** reference source is a natural next step (AF3 monomer
+predictions exist on the lab's cluster) but isn't wired up yet -- it needs
+the actual files transferred locally and a defined ortholog-mapping
+convention first.
 
 ## Downloading structures and plots
 

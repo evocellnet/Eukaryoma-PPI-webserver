@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from eukaryoma_ppi import external_scores, structures, viewer
+from eukaryoma_ppi import complex_annotations, external_scores, external_structures, structures, viewer
 
 # Row highlight for pairs flagged true-positive by CORUM/Marcotte complex
 # co-membership (see eukaryoma_ppi.complex_annotations). Both present wins.
@@ -149,6 +149,85 @@ def get_pdb_text(pool, chain_a, chain_b):
     return structures.extract_chains_as_pdb(pool, [chain_a, chain_b])
 
 
+@st.cache_data
+def get_single_chain_pdb_text(pool, chain_id):
+    return structures.extract_chains_as_pdb(pool, [chain_id])
+
+
+@st.cache_data
+def get_superposed_pdb_texts(pool_chain_pairs):
+    return structures.superpose_chains_as_pdb(pool_chain_pairs)
+
+
+MAX_STRUCTURE_COMPARISON = 8
+
+
+def render_structure_comparison(protein_id, protein_pools, key_prefix=""):
+    """One protein, several pools -- compare its predicted structure across
+    them, either superposed in one view or side by side. protein_pools: a
+    DataFrame with "pool"/"chain" columns, one row per pool this protein has
+    an AF3 structure in (already deduplicated by caller).
+    """
+    if len(protein_pools) < 2:
+        st.info("This protein has an AF3 structure in fewer than 2 pools, so there's nothing to compare.")
+        return
+
+    pool_options = protein_pools["pool"].tolist()
+    default = pool_options[: min(4, len(pool_options))]
+    selected_pools = st.multiselect(
+        f"Pools to compare (up to {MAX_STRUCTURE_COMPARISON})",
+        pool_options,
+        default=default,
+        key=f"{key_prefix}compare_pools",
+    )
+    if len(selected_pools) > MAX_STRUCTURE_COMPARISON:
+        st.warning(f"Comparing this many structures at once gets slow to render -- showing the first {MAX_STRUCTURE_COMPARISON} selected.")
+        selected_pools = selected_pools[:MAX_STRUCTURE_COMPARISON]
+    if len(selected_pools) < 2:
+        st.info("Select at least 2 pools to compare.")
+        return
+
+    chain_by_pool = dict(zip(protein_pools["pool"], protein_pools["chain"]))
+    pool_chain_pairs = tuple((pool, chain_by_pool[pool]) for pool in selected_pools)
+
+    mode = st.radio(
+        "Comparison mode",
+        ["Superimpose (aligned overlay)", "Side by side"],
+        horizontal=True,
+        key=f"{key_prefix}compare_mode",
+    )
+
+    if mode == "Superimpose (aligned overlay)":
+        pdb_texts = get_superposed_pdb_texts(pool_chain_pairs)
+        ok = [(pool, pdb) for (pool, _chain), pdb in zip(pool_chain_pairs, pdb_texts) if pdb is not None]
+        skipped = [pool for (pool, _chain), pdb in zip(pool_chain_pairs, pdb_texts) if pdb is None]
+        if skipped:
+            st.warning(
+                f"Skipped (different residue count than the first selected pool, so they can't be aligned "
+                f"1:1): {', '.join(skipped)}."
+            )
+        if len(ok) < 2:
+            st.info("Not enough compatible structures left to overlay.")
+            return
+
+        legend = " &nbsp; ".join(
+            f'<span style="color:{viewer.COMPARISON_COLORS[i % len(viewer.COMPARISON_COLORS)]}">●</span> {pool}'
+            for i, (pool, _pdb) in enumerate(ok)
+        )
+        st.markdown(legend, unsafe_allow_html=True)
+        html = viewer.render_overlay([pdb for _pool, pdb in ok])
+        components.html(html, height=580)
+    else:
+        cols = st.columns(min(len(pool_chain_pairs), 4))
+        for i, (pool, chain) in enumerate(pool_chain_pairs):
+            pdb_text = get_single_chain_pdb_text(pool, chain)
+            color = viewer.COMPARISON_COLORS[i % len(viewer.COMPARISON_COLORS)]
+            html = viewer.render_single(pdb_text, color)
+            with cols[i % len(cols)]:
+                st.caption(f"Pool **{pool}**")
+                components.html(html, height=340)
+
+
 def style_true_positive_rows(df):
     """Highlight rows flagged true-positive by CORUM/Marcotte, if those
     columns are present; otherwise return df unchanged.
@@ -209,6 +288,55 @@ def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
         mime="chemical/x-pdb",
         key=f"{key_prefix}download_structure",
     )
+
+    render_reference_structure_picker(protein_a, protein_b, key_prefix=key_prefix)
+
+
+@st.cache_data
+def get_human_uniprot_orthologs():
+    """{protein_id: {uniprot_accession, ...}} via CORUM/Marcotte's own
+    "uniprot" column -- see complex_annotations.human_uniprot_orthologs.
+    """
+    return complex_annotations.human_uniprot_orthologs()
+
+
+@st.cache_data(show_spinner="Fetching reference structure from AlphaFold DB...")
+def get_alphafold_reference_pdb(accession):
+    return external_structures.fetch_alphafold_pdb(accession)
+
+
+def render_reference_structure_picker(protein_a, protein_b, key_prefix=""):
+    """Optional side-by-side reference: either protein's human ortholog's
+    own solo AlphaFold DB prediction (fetched live from EBI, by the UniProt
+    accession CORUM/Marcotte cross-reference it to), for comparing against
+    this pool's pair structure above. Silently does nothing if neither
+    protein has a usable accession.
+    """
+    orthologs = get_human_uniprot_orthologs()
+    options = {}
+    for label, protein_id in [("Protein A", protein_a), ("Protein B", protein_b)]:
+        for accession in sorted(orthologs.get(protein_id, ())):
+            options[f"{label} ({protein_id}) — human {accession}"] = accession
+    if not options:
+        return
+
+    st.divider()
+    st.caption(
+        "Compare against a reference: a human ortholog's own solo prediction from **AlphaFold DB** (via "
+        "CORUM/Marcotte's complex membership, not this app's own AF3 predictions) -- fetched live from EBI."
+    )
+    choice = st.selectbox("Reference structure", ["None"] + list(options.keys()), key=f"{key_prefix}reference_structure")
+    if choice == "None":
+        return
+
+    accession = options[choice]
+    reference_pdb = get_alphafold_reference_pdb(accession)
+    if reference_pdb is None:
+        st.warning(f"Could not fetch the AlphaFold DB structure for {accession} (not available, or a network error).")
+        return
+
+    st.caption(f"AlphaFold DB human ortholog prediction for **{accession}**")
+    components.html(viewer.render_single(reference_pdb, color="#54A24B"), height=420)
 
 
 def render_pair_detail(row, protein_a, protein_b, key_prefix=""):

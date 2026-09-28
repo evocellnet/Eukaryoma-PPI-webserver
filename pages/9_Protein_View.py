@@ -3,7 +3,7 @@ import pandas as pd
 import altair as alt
 import streamlit as st
 
-from eukaryoma_ppi import annotations, eggnog, external_scores, ui
+from eukaryoma_ppi import annotations, eggnog, external_scores, go_enrichment, ui
 from eukaryoma_ppi.config import ANNOTATIONS_INDEX_FILE, EGGNOG_INDEX_FILE, UNIVERSE_INDEX_FILE
 
 st.set_page_config(page_title="Protein View - Eukaryoma PPI", page_icon="🧬", layout="wide")
@@ -319,3 +319,78 @@ else:
     if has_tp_columns:
         caption += " Edge color marks known true-positive interactions: green CORUM, blue Marcotte, purple both."
     st.caption(caption)
+
+    st.subheader("GO term enrichment of this interactome")
+    st.write(
+        "Which GO terms are over-represented among these proteins, compared to every eggNOG-annotated "
+        "website protein as background (hypergeometric test, Benjamini-Hochberg FDR-corrected). GO term "
+        "*names* aren't shown -- this site doesn't bundle a GO ontology file -- click a term to look it up "
+        "on QuickGO."
+    )
+
+    @st.cache_data
+    def get_go_enrichment(foreground_ids, _background_ids):
+        return go_enrichment.enrichment(set(foreground_ids), eggnog.load_eggnog_annotations(), _background_ids)
+
+    website_ids_set = set(protein_options)
+    enrichment_df = get_go_enrichment(tuple(sorted(node_ids)), website_ids_set)
+    fdr_threshold = st.slider("FDR threshold", 0.0, 1.0, 0.05, step=0.01, key="go_fdr_threshold")
+    significant = enrichment_df[enrichment_df["fdr"] <= fdr_threshold] if not enrichment_df.empty else enrichment_df
+
+    if significant.empty:
+        st.info(f"No GO terms pass FDR ≤ {fdr_threshold:.2f} for this set of {len(node_ids)} proteins.")
+    else:
+        st.caption(
+            f"{len(significant):,} GO term(s) enriched at FDR ≤ {fdr_threshold:.2f} "
+            f"({len(node_ids)} proteins vs. {len(website_ids_set):,} website background)."
+        )
+        display_df = significant.head(50).copy()
+        display_df["go_url"] = display_df["go_id"].map(eggnog.quickgo_url)
+        st.dataframe(
+            display_df[["go_url", "n_foreground", "n_background", "pvalue", "fdr"]],
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "go_url": st.column_config.LinkColumn("GO term", display_text=r"QuickGO/term/(.*)"),
+                "n_foreground": st.column_config.NumberColumn("In this set"),
+                "n_background": st.column_config.NumberColumn("In website background"),
+                "pvalue": st.column_config.NumberColumn("p-value", format="%.2e"),
+                "fdr": st.column_config.NumberColumn("FDR", format="%.2e"),
+            },
+        )
+
+    with st.expander("Just list the GO terms present (no statistics)"):
+        freq_df = go_enrichment.term_frequency(node_ids, eggnog.load_eggnog_annotations())
+        if freq_df.empty:
+            st.info("None of these proteins have an eggNOG GO annotation.")
+        else:
+            freq_df = freq_df.copy()
+            freq_df["go_url"] = freq_df["go_id"].map(eggnog.quickgo_url)
+            st.dataframe(
+                freq_df[["go_url", "n_proteins", "fraction"]],
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "go_url": st.column_config.LinkColumn("GO term", display_text=r"QuickGO/term/(.*)"),
+                    "n_proteins": st.column_config.NumberColumn("Proteins with this term"),
+                    "fraction": st.column_config.NumberColumn("Fraction of this set", format="percent"),
+                },
+            )
+
+st.divider()
+st.header("Compare structures across pools")
+st.write(
+    "This protein may have been predicted in several different pools, each time paired with a different "
+    "partner. Compare those predictions of *this protein alone* to see how consistent its predicted fold is "
+    "across pooling contexts."
+)
+
+protein_chain = np.where(protein_pairs["protein_a"] == protein_id, protein_pairs["chain_a"], protein_pairs["chain_b"])
+protein_pools = (
+    protein_pairs.assign(chain=protein_chain)
+    .dropna(subset=["pool", "chain"])
+    .drop_duplicates(subset=["pool"])[["pool", "chain"]]
+    .sort_values("pool")
+    .reset_index(drop=True)
+)
+ui.render_structure_comparison(protein_id, protein_pools, key_prefix="protview_compare_")

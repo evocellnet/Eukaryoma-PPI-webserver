@@ -63,6 +63,35 @@ def load_complex_groups(path, group_col, species_col="Capsaspora"):
     return groups
 
 
+def human_uniprot_orthologs():
+    """{protein_id: {uniprot_accession, ...}}: human UniProt accessions this
+    Capsaspora protein is annotated as an ortholog of, from CORUM and/or
+    Marcotte's own "uniprot" column -- both files list the human gene each
+    row's Capsaspora ortholog(s) came from, by its real UniProtKB accession
+    (unlike eukaryoma_ppi.eggnog's ortholog_accession, which is eggNOG's own
+    best-hit search across many reference proteomes and is only very rarely
+    an actual fetchable UniProt id for this species). Used to fetch each
+    protein's human reference structure from AlphaFold DB. A protein can
+    have more than one accession here when it's the Capsaspora ortholog of
+    several human paralogs.
+    """
+    mapping = {}
+    for path, _group_col in SOURCES.values():
+        if not path.exists():
+            continue
+        df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+        for _, row in df.iterrows():
+            # Usually one accession, but Marcotte rows can group several
+            # paralogous human genes under one row (";"-joined, like
+            # Capsaspora) -- e.g. "Q8N5J2;Q8NBR6" for "MINDY1;MINDY2".
+            accessions = [a.strip() for a in row.get("uniprot", "").split(";") if a.strip()]
+            if not accessions:
+                continue
+            for protein_id in _member_website_ids(row["Capsaspora"]):
+                mapping.setdefault(protein_id, set()).update(accessions)
+    return mapping
+
+
 def true_positive_pairs(path, group_col, website_ids):
     """{(protein_lo, protein_hi), ...}: every pair of website proteins sharing
     membership in some group. Annotation files cover the whole Capsaspora

@@ -31,10 +31,71 @@ col1.metric("Pools", f"{len(pools_df):,}")
 col2.metric("Unique proteins", f"{n_unique_proteins:,}")
 col3.metric("Protein pairs", f"{n_unique_pairs:,}")
 
-st.info(
-    "Use **Browse Pairs** in the sidebar to rank pairs by predicted interaction score, "
-    "or **Pair Viewer** to look up a specific pair directly."
-)
+st.divider()
+st.header("Pages")
+st.write("Every page in the sidebar, and what it's for:")
+
+PAGES = [
+    ("pages/1_Browse_Pairs.py", "🔍", "Browse Pairs", "Rank AF3 pool pairs by predicted interaction score (ipTM)."),
+    (
+        "pages/2_Pair_Viewer.py",
+        "🔎",
+        "Pair Viewer",
+        "Look up one specific pair by protein id, or by matching text anywhere in its annotation.",
+    ),
+    (
+        "pages/3_Coabundance.py",
+        "📊",
+        "Coabundance",
+        "Rank pairs by co-abundance correlation across samples.",
+    ),
+    (
+        "pages/4_Cofractionation.py",
+        "📊",
+        "Cofractionation",
+        "Rank pairs by co-fractionation correlation.",
+    ),
+    (
+        "pages/5_Phyloprofiling.py",
+        "📊",
+        "Phyloprofiling",
+        "Rank pairs by phylogenetic co-occurrence (HogProf).",
+    ),
+    (
+        "pages/6_Unified_Ranking.py",
+        "🏆",
+        "Unified Ranking",
+        "Combine every source into one score -- equal-weighted by default, or weighted (with "
+        "adjustable per-source sliders) by each score's own distribution.",
+    ),
+    (
+        "pages/7_Annotation_Sources.py",
+        "📚",
+        "Annotation Sources",
+        "What the CORUM/Marcotte true-positive annotations actually cover: complex/category counts, "
+        "sizes, and how many pairs each one contributes.",
+    ),
+    (
+        "pages/8_Annotated_Pairs.py",
+        "🎯",
+        "Annotated Pairs",
+        "Check how well each score agrees with the CORUM/Marcotte annotations, and find pairs where "
+        "they disagree.",
+    ),
+    (
+        "pages/9_Protein_View.py",
+        "🧬",
+        "Protein View",
+        "Pick one protein: every interaction it's in, external database links, its eggNOG annotation, "
+        "an interactome graph with GO-term enrichment, and structure comparison across pools.",
+    ),
+]
+
+page_cols = st.columns(3)
+for i, (path, icon, title, description) in enumerate(PAGES):
+    with page_cols[i % 3]:
+        st.page_link(path, label=f"{icon} {title}")
+        st.caption(description)
 
 st.divider()
 st.header("Data source coverage")
