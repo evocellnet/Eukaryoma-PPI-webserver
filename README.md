@@ -13,8 +13,14 @@ protein whose description mentions it); **Coabundance**/**Cofractionation**/
 **Phyloprofiling** rank pairs by each external association-score source;
 **Unified Ranking** combines all sources into one table; and **Annotations**
 checks all of the above against known true-positive interactions. Selecting a
-row anywhere shows that pair's AF3 structure when one has been predicted.
-Pairs known to be true positives (see below) are highlighted in every table.
+row anywhere shows that pair's AF3 structure when one has been predicted, with
+a download button for the extracted PDB. Pairs known to be true positives
+(see below) are highlighted in every table.
+
+**Protein View** flips this around: pick one protein of interest and see
+every interaction it's part of, external database links, its eggNOG-mapper
+functional annotation, and a small interactome graph centered on it (see
+below).
 
 ## Data layout
 
@@ -33,11 +39,12 @@ data/
 │   └── annotations/          # true-positive complex annotations (see below)
 │       ├── corum/corum_annotations.tsv
 │       └── marcotte/marcotte_annotations.txt
+│   └── eggnogg_annotations/MICH_Capsaspora_owczarzaki_Schultz_A.tsv  # eggNOG-mapper output (see below)
 ├── pools/                   # <pool_name>.fcz, one pooled AF3 prediction per pool
 ├── structures/               # generated: <pool_name>.cif, decompressed by build_data.py
 └── index/                     # generated: pools.parquet, pairs.parquet,
-                                #            protein_annotations.parquet, universe_scores.parquet,
-                                #            true_positive_pairs.parquet
+                                #            protein_annotations.parquet, eggnog_annotations.parquet,
+                                #            universe_scores.parquet, true_positive_pairs.parquet
 ```
 
 By default the app looks for `data/` as a sibling of this repo checkout
@@ -159,6 +166,56 @@ pairs where a score and the annotation disagree (high score without
 annotation, or low score despite it) -- candidates for annotation false
 negatives or under-ranked real interactions. Override file paths with
 `EUKARYOMA_CORUM_FILE` / `EUKARYOMA_MARCOTTE_FILE`.
+
+## Protein View and eggNOG-mapper annotation
+
+**Protein View** flips the browsing model from interaction-centric to
+protein-centric: pick one protein and see everything the site knows about it
+in one place -- every pair it appears in (sortable/filterable by any score,
+same true-positive highlighting as elsewhere), direct links out to UniProt,
+NCBI Protein and the AlphaFold DB, its eggNOG-mapper functional annotation,
+and a small interactome graph centered on it.
+
+The external-database links and the functional annotation (GO terms, KEGG
+orthologs/pathways, PFAM domains, COG category, eggNOG orthologous groups)
+come from **eggNOG-mapper** output (`eukaryoma_ppi.eggnog`), parsed into
+`data/index/eggnog_annotations.parquet` by `scripts/build_data.py`. This is a
+different source from the OMA/FASTA description used elsewhere in the app
+(`protein_annotations.parquet`), so the UI always labels it "eggNOG" to keep
+the two apart. Override the input file with `EUKARYOMA_EGGNOG_FILE`.
+
+eggNOG's `seed_ortholog` column gives an accession to link out with, but for
+~99% of Capsaspora proteins that "ortholog" is just the protein's own
+existing NCBI RefSeq entry (a self-hit, since Capsaspora is already in
+eggNOG's reference databases) rather than a genuine cross-species UniProt
+match. `eukaryoma_ppi.eggnog` tells the two apart by accession shape
+(RefSeq: `XP_`/`NP_` with an underscore; UniProt: no underscore) and links
+accordingly: a RefSeq accession gets a direct NCBI Protein link but only
+*search* links for UniProt/AlphaFold DB (no direct id to look up there),
+while a genuine UniProt accession gets direct links to all three.
+
+The interactome graph starts small: a slider sets a unified-score cutoff and
+only partners scoring at or above it are auto-included as nodes (edge
+thickness encodes unified score). Selecting rows in the interactions table
+above adds those specific partners to the graph regardless of score, for
+digging into a lower-confidence interaction of interest without lowering the
+threshold for everyone else. Layout is a plain circular placement (the
+protein of interest at the center, partners spaced evenly around it) computed
+by hand with numpy -- no networkx/graphviz dependency, keeping the app
+pip-installable per `COLLABORATOR_SETUP.md`.
+
+## Downloading structures and plots
+
+Every 3D structure viewer (Pair Viewer, Browse Pairs, the per-source ranking
+pages, Unified Ranking, Protein View) has a **Download structure (.pdb)**
+button right below it, serving the same extracted two-chain PDB the viewer
+renders -- useful for figures or re-analysis outside the browser.
+
+Every chart in the app (score plots, the Annotations scatter/violin, the
+Protein View interactome) is a Vega-Embed chart under the hood, which ships
+its own **"..." menu** in the top-right corner of the chart with "Save as
+SVG"/"Save as PNG" built in -- no separate download button is needed for
+plots.
 
 ## The `.fcz` format and `bin/foldcomp`
 

@@ -17,6 +17,8 @@ It:
   3. Parses protein annotations from the FASTA headers into
      data/index/protein_annotations.parquet, and reports whether every
      website protein id has a matching FASTA entry.
+  3b. Parses eggNOG-mapper functional annotation (GO/KEGG/PFAM/ortholog
+     ids) into data/index/eggnog_annotations.parquet.
   4. Parses CORUM/Marcotte complex co-membership into
      data/index/true_positive_pairs.parquet (corum_tp/marcotte_tp flags,
      merged into both pairs.parquet and universe_scores.parquet).
@@ -36,8 +38,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from eukaryoma_ppi import annotations, complex_annotations, external_scores, index
-from eukaryoma_ppi.config import FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
+from eukaryoma_ppi import annotations, complex_annotations, eggnog, external_scores, index
+from eukaryoma_ppi.config import EGGNOG_FILE, FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
 from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_pool
 
 
@@ -114,6 +116,22 @@ def main():
             print(f"  All {len(website_ids)} website protein ids matched a FASTA header ({len(annotations_df)} total).")
     else:
         print(f"  [WARN] FASTA_FILE not found at {FASTA_FILE}; skipping protein annotations.")
+
+    if EGGNOG_FILE.exists():
+        print("Parsing eggNOG-mapper functional annotation...")
+        eggnog_df = eggnog.parse_eggnog_annotations()
+        eggnog.save_eggnog_annotations(eggnog_df)
+        website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])
+        missing = eggnog.missing_protein_ids(website_ids, eggnog_df)
+        if missing:
+            print(
+                f"  [WARN] {len(missing)}/{len(website_ids)} website protein ids have no eggNOG annotation: "
+                f"{sorted(missing)[:10]}{'...' if len(missing) > 10 else ''}"
+            )
+        else:
+            print(f"  All {len(website_ids)} website protein ids matched an eggNOG entry ({len(eggnog_df)} total).")
+    else:
+        print(f"  [WARN] EGGNOG_FILE not found at {EGGNOG_FILE}; skipping eggNOG annotations.")
 
     print("Parsing CORUM/Marcotte true-positive complex co-membership...")
     website_ids = set(pairs_df["protein_a"]) | set(pairs_df["protein_b"])

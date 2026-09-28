@@ -67,6 +67,16 @@ MARCOTTE_FILE = Path(
     )
 )
 
+# eggNOG-mapper functional annotation (GO/KEGG/PFAM/ortholog identifiers),
+# distinct from the OMA/FASTA annotation in ANNOTATIONS_INDEX_FILE below --
+# see eukaryoma_ppi.eggnog for the file format and id matching.
+EGGNOG_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_EGGNOG_FILE",
+        OTHER_DATA_SOURCES_DIR / "eggnogg_annotations" / "MICH_Capsaspora_owczarzaki_Schultz_A.tsv",
+    )
+)
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
@@ -74,6 +84,7 @@ INDEX_DIR = Path(os.environ.get("EUKARYOMA_INDEX_DIR", DATA_DIR / "index"))
 PAIRS_INDEX_FILE = INDEX_DIR / "pairs.parquet"
 POOLS_INDEX_FILE = INDEX_DIR / "pools.parquet"
 ANNOTATIONS_INDEX_FILE = INDEX_DIR / "protein_annotations.parquet"
+EGGNOG_INDEX_FILE = INDEX_DIR / "eggnog_annotations.parquet"
 # One row per possible pair among the website's proteins (~2.3M for 2145
 # proteins), with a score column per source (NaN where that source doesn't
 # cover the pair) plus a combined unified_score. See eukaryoma_ppi.external_scores.

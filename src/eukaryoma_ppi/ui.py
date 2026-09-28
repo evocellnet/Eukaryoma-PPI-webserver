@@ -78,6 +78,13 @@ def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
 
     st.caption(f"Pool **{pool}** &mdash; chain {chain_a} = {protein_a}, chain {chain_b} = {protein_b}")
     components.html(html, height=580)
+    st.download_button(
+        "Download structure (.pdb)",
+        data=pdb_text,
+        file_name=f"{pool}_{protein_a}_{protein_b}.pdb",
+        mime="chemical/x-pdb",
+        key=f"{key_prefix}download_structure",
+    )
 
 
 def render_pair_detail(row, protein_a, protein_b, key_prefix=""):
