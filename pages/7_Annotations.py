@@ -68,16 +68,28 @@ else:
 st.divider()
 st.header("Explore score vs. annotation")
 st.write(
-    "Each point is a pair, jittered by annotation category. Drag a box over a region (e.g. high scores in "
-    "the \"Not annotated\" row) to list those pairs below -- candidates for false negatives in the "
-    "annotation, or, in the true-positive rows at low score, cases the score under-ranks."
+    "Each point is a pair, jittered by annotation category, plotted against the grey baseline distribution "
+    "of not-annotated pairs' scores (so you can see whether the true-positive rows actually sit above the "
+    "baseline, not just relative to each other). Drag a box over a region (e.g. high scores in the \"Not "
+    "annotated\" row) to list those pairs below -- candidates for false negatives in the annotation, or, in "
+    "the true-positive rows at low score, cases the score under-ranks."
 )
 
 explore_score_col, explore_score_label = st.selectbox(
     "Score to explore", SCORE_COLUMNS, format_func=lambda pair: pair[1], key="explore_score"
 )
 
+
+@st.cache_data
+def get_baseline_density(_universe_df, score_col, n_bins=40):
+    return tp_analysis.baseline_score_density(_universe_df, score_col, n_bins)
+
+
+density_df = get_baseline_density(universe_df, explore_score_col)
+
 MAX_PLOTTED = 4000
+MIN_BASELINE_POINTS = 800  # always keep some "Not annotated" points for visual context,
+# even when the (rare) annotated points alone would otherwise fill the budget
 
 
 @st.cache_data
@@ -89,9 +101,15 @@ def get_plot_sample(_universe_df, score_col, max_plotted, seed=0):
     if len(plot_df) > max_plotted:
         annotated = plot_df[plot_df["tp_category"] != "Not annotated"]
         not_annotated = plot_df[plot_df["tp_category"] == "Not annotated"]
-        budget = max(max_plotted - len(annotated), 0)
-        if len(not_annotated) > budget:
-            not_annotated = not_annotated.sample(budget, random_state=seed)
+
+        baseline_target = min(max(max_plotted - len(annotated), MIN_BASELINE_POINTS), len(not_annotated))
+        if len(not_annotated) > baseline_target:
+            not_annotated = not_annotated.sample(baseline_target, random_state=seed)
+
+        annotated_budget = max_plotted - len(not_annotated)
+        if len(annotated) > annotated_budget:
+            annotated = annotated.sample(annotated_budget, random_state=seed)
+
         plot_df = pd.concat([annotated, not_annotated])
 
     rng = np.random.default_rng(seed)
@@ -118,7 +136,27 @@ scatter = (
     .properties(height=320)
 )
 
-event = st.altair_chart(scatter, on_select="rerun", selection_mode="brush", key="annotation_scatter")
+if density_df.empty:
+    combined_chart = scatter
+else:
+    max_density = float(density_df["density"].max()) * 1.15
+    density_scale = alt.Scale(domain=[-max_density, max_density])
+    violin_top = (
+        alt.Chart(density_df)
+        .mark_area(color="#888888", opacity=0.7, interpolate="monotone")
+        .encode(x=alt.X("score_bin:Q", title=None), y=alt.Y("density:Q", axis=None, scale=density_scale))
+    )
+    violin_bottom = (
+        alt.Chart(density_df)
+        .mark_area(color="#888888", opacity=0.7, interpolate="monotone")
+        .encode(x=alt.X("score_bin:Q", title=None), y=alt.Y("neg_density:Q", axis=None, scale=density_scale))
+    )
+    violin = (violin_top + violin_bottom).properties(
+        height=70, title="Not-annotated baseline (score density)"
+    )
+    combined_chart = alt.vconcat(violin, scatter).resolve_scale(x="shared")
+
+event = st.altair_chart(combined_chart, on_select="rerun", selection_mode="brush", key="annotation_scatter")
 
 brush_sel = event.selection.get("brush", {}) if event.selection else {}
 x_range = brush_sel.get(explore_score_col)

@@ -67,3 +67,23 @@ def tp_category(df):
         ["Both", "CORUM", "Marcotte"],
         default="Not annotated",
     )
+
+
+def baseline_score_density(df, score_col, n_bins=40):
+    """Histogram-based score density for pairs not flagged true-positive by
+    any source -- the baseline the true-positive rows should stand out
+    against. A histogram is computed over the *full* not-annotated
+    population (fast even at millions of rows -- no need to subsample);
+    only the resulting n_bins-row curve is ever plotted.
+
+    Returns a DataFrame [score_bin, density, neg_density] (the latter just
+    -density, for mirroring into a violin shape); empty if there's no data.
+    """
+    not_annotated = ~(df["corum_tp"] | df["marcotte_tp"])
+    scores = df.loc[not_annotated & df[score_col].notna(), score_col]
+    if scores.empty:
+        return pd.DataFrame(columns=["score_bin", "density", "neg_density"])
+
+    counts, edges = np.histogram(scores, bins=n_bins, density=True)
+    centers = (edges[:-1] + edges[1:]) / 2
+    return pd.DataFrame({"score_bin": centers, "density": counts, "neg_density": -counts})

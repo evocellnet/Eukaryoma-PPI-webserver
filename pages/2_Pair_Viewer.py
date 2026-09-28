@@ -1,7 +1,7 @@
 import streamlit as st
 
-from eukaryoma_ppi import external_scores, index, ui
-from eukaryoma_ppi.config import PAIRS_INDEX_FILE, POOLS_INDEX_FILE, UNIVERSE_INDEX_FILE
+from eukaryoma_ppi import annotations, external_scores, index, ui
+from eukaryoma_ppi.config import ANNOTATIONS_INDEX_FILE, PAIRS_INDEX_FILE, POOLS_INDEX_FILE, UNIVERSE_INDEX_FILE
 
 st.set_page_config(page_title="Pair Viewer - Eukaryoma PPI", page_icon="🧬", layout="wide")
 st.title("Protein Pair Viewer")
@@ -22,16 +22,43 @@ def get_protein_options(_pairs_df):
 
 
 @st.cache_data
+def get_annotation_map():
+    if not ANNOTATIONS_INDEX_FILE.exists():
+        return {}
+    df = annotations.load_annotations()
+    return dict(zip(df["protein_id"], df["annotation"]))
+
+
+@st.cache_data
 def get_universe_for_pair_viewer():
     return external_scores.load_universe()
 
 
+def format_protein_option(protein_id, annotation_map):
+    annotation = annotation_map.get(protein_id)
+    return f"{protein_id} — {annotation}" if annotation else protein_id
+
+
 pairs_df = get_pairs_index()
 protein_options = get_protein_options(pairs_df)
+annotation_map = get_annotation_map()
 
+st.caption("Search by protein id or by its description/annotation (e.g. \"kinase\").")
 col_a, col_b = st.columns(2)
-protein_a = col_a.selectbox("Protein A", protein_options, index=None, placeholder="Select or type an ID")
-protein_b = col_b.selectbox("Protein B", protein_options, index=None, placeholder="Select or type an ID")
+protein_a = col_a.selectbox(
+    "Protein A",
+    protein_options,
+    index=None,
+    placeholder="Search by id or annotation",
+    format_func=lambda pid: format_protein_option(pid, annotation_map),
+)
+protein_b = col_b.selectbox(
+    "Protein B",
+    protein_options,
+    index=None,
+    placeholder="Search by id or annotation",
+    format_func=lambda pid: format_protein_option(pid, annotation_map),
+)
 
 if not protein_a or not protein_b:
     st.info("Pick two proteins to look up their predicted interaction.")

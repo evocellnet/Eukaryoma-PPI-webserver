@@ -7,13 +7,14 @@ specific protein pair contained in a pool. Loosely modelled on
 [mutfunc](https://github.com/jurgjn/mutfunc)'s local-lookup + 3D-viewer UX.
 
 Ways to pick a pair: **Browse Pairs** ranks AF3 pool pairs by predicted
-interaction score; **Pair Viewer** looks up a specific pair by protein id;
-**Coabundance**/**Cofractionation**/**Phyloprofiling** rank pairs by each
-external association-score source; **Unified Ranking** combines all sources
-into one table; and **Annotations** checks all of the above against known
-true-positive interactions. Selecting a row anywhere shows that pair's AF3
-structure when one has been predicted. Pairs known to be true positives
-(see below) are highlighted in every table.
+interaction score; **Pair Viewer** looks up a specific pair by protein id *or*
+by matching text in its annotation (e.g. searching "kinase" finds every
+protein whose description mentions it); **Coabundance**/**Cofractionation**/
+**Phyloprofiling** rank pairs by each external association-score source;
+**Unified Ranking** combines all sources into one table; and **Annotations**
+checks all of the above against known true-positive interactions. Selecting a
+row anywhere shows that pair's AF3 structure when one has been predicted.
+Pairs known to be true positives (see below) are highlighted in every table.
 
 ## Data layout
 
@@ -147,8 +148,14 @@ co-membership pairs for proteins in more than one complex).
 it into both `pairs.parquet` and `universe_scores.parquet`. Every pair table
 in the app highlights true-positive rows (green/blue/purple for
 CORUM/Marcotte/both); the **Annotations** page plots true-positive rate by
-score quantile for each score, and lets you brush-select or threshold-filter
-for pairs where a score and the annotation disagree (high score without
+score quantile for each score, and a jittered scatter of true-positive pairs
+per score plotted against a grey violin of the not-annotated population's
+score distribution (`eukaryoma_ppi.tp_analysis.baseline_score_density` -- a
+histogram computed over the full not-annotated population, not a sample,
+since that stays fast even at millions of rows) as a baseline for whether
+true-positive scores are actually higher, not just relative to each other.
+Both the scatter and the violin support brush-select or threshold-filter for
+pairs where a score and the annotation disagree (high score without
 annotation, or low score despite it) -- candidates for annotation false
 negatives or under-ranked real interactions. Override file paths with
 `EUKARYOMA_CORUM_FILE` / `EUKARYOMA_MARCOTTE_FILE`.
