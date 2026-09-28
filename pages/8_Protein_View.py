@@ -242,7 +242,7 @@ else:
     if not edges_df.empty:
         layers.append(
             alt.Chart(edges_df)
-            .mark_rule(color="#888888")
+            .mark_rule(color="#666666")
             .encode(
                 x=alt.X("x:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
                 y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
@@ -254,7 +254,7 @@ else:
         )
     layers.append(
         alt.Chart(nodes_df)
-        .mark_circle(size=500)
+        .mark_circle(size=500, stroke="#1a1a1a", strokeWidth=1)
         .encode(
             x=alt.X("x:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
             y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
@@ -264,10 +264,17 @@ else:
     )
     layers.append(
         alt.Chart(nodes_df)
-        .mark_text(dy=-16, fontSize=10)
+        .mark_text(dy=-16, fontSize=11, fontWeight="bold", color="#1a1a1a")
         .encode(x="x:Q", y="y:Q", text="protein_id:N")
     )
 
-    network_chart = alt.layer(*layers).properties(width=600, height=600).configure_view(strokeWidth=0)
-    st.altair_chart(network_chart)
+    # Fixed light background regardless of the app's light/dark theme --
+    # these marks use literal colors that don't adapt to Streamlit's theme,
+    # so a dark app background left the (default black) text unreadable.
+    network_chart = (
+        alt.layer(*layers)
+        .properties(width=600, height=600, background="#FFFFFF")
+        .configure_view(strokeWidth=0)
+    )
+    st.altair_chart(network_chart, theme=None)
     st.caption(f"{len(node_ids)} proteins, {len(edges_df)} known interactions among them shown as edges.")
