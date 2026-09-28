@@ -231,27 +231,52 @@ else:
     # without needing to generate/query individual (a, b) pairs by hand.
     node_set = set(node_ids)
     candidate_edges = universe_df[universe_df["protein_a"].isin(node_set) & universe_df["protein_b"].isin(node_set)]
-    edges_df = candidate_edges[["protein_a", "protein_b", "unified_score"]].dropna(subset=["unified_score"]).copy()
+    has_tp_columns = all(col in candidate_edges.columns for col in ui.TP_COLUMNS)
+    edge_cols = ["protein_a", "protein_b", "unified_score"] + (ui.TP_COLUMNS if has_tp_columns else [])
+    edges_df = candidate_edges[edge_cols].dropna(subset=["unified_score"]).copy()
     edges_df = edges_df.rename(columns={"protein_a": "a", "protein_b": "b"})
     edges_df["x"] = edges_df["a"].map(lambda p: positions[p][0])
     edges_df["y"] = edges_df["a"].map(lambda p: positions[p][1])
     edges_df["x2"] = edges_df["b"].map(lambda p: positions[p][0])
     edges_df["y2"] = edges_df["b"].map(lambda p: positions[p][1])
 
+    if has_tp_columns:
+        def _tp_label(row):
+            corum, marcotte = bool(row["corum_tp"]), bool(row["marcotte_tp"])
+            if corum and marcotte:
+                return "Both"
+            if corum:
+                return "CORUM"
+            if marcotte:
+                return "Marcotte"
+            return "None"
+
+        edges_df["true_positive"] = edges_df.apply(_tp_label, axis=1)
+
     layers = []
     if not edges_df.empty:
-        layers.append(
-            alt.Chart(edges_df)
-            .mark_rule(color="#666666")
-            .encode(
-                x=alt.X("x:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
-                y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
-                x2="x2:Q",
-                y2="y2:Q",
-                strokeWidth=alt.StrokeWidth("unified_score:Q", legend=None, scale=alt.Scale(range=[1, 6])),
-                tooltip=["a", "b", alt.Tooltip("unified_score:Q", format=".3f")],
-            )
+        edge_encoding = dict(
+            x=alt.X("x:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
+            y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=[-1.3, 1.3])),
+            x2=alt.X2("x2:Q"),
+            y2=alt.Y2("y2:Q"),
+            strokeWidth=alt.StrokeWidth("unified_score:Q", legend=None, scale=alt.Scale(range=[1, 6])),
         )
+        if has_tp_columns:
+            edge_encoding["color"] = alt.Color(
+                "true_positive:N",
+                title="Known true positive",
+                scale=alt.Scale(
+                    domain=["None", "CORUM", "Marcotte", "Both"],
+                    range=["#999999", "#2ca02c", "#3d6fd6", "#9467bd"],
+                ),
+                legend=None,
+            )
+            edge_encoding["tooltip"] = ["a", "b", alt.Tooltip("unified_score:Q", format=".3f"), "true_positive"]
+        else:
+            edge_encoding["color"] = alt.value("#666666")
+            edge_encoding["tooltip"] = ["a", "b", alt.Tooltip("unified_score:Q", format=".3f")]
+        layers.append(alt.Chart(edges_df).mark_rule().encode(**edge_encoding))
     layers.append(
         alt.Chart(nodes_df)
         .mark_circle(size=500, stroke="#1a1a1a", strokeWidth=1)
@@ -277,4 +302,7 @@ else:
         .configure_view(strokeWidth=0)
     )
     st.altair_chart(network_chart, theme=None)
-    st.caption(f"{len(node_ids)} proteins, {len(edges_df)} known interactions among them shown as edges.")
+    caption = f"{len(node_ids)} proteins, {len(edges_df)} known interactions among them shown as edges."
+    if has_tp_columns:
+        caption += " Edge color marks known true-positive interactions: green CORUM, blue Marcotte, purple both."
+    st.caption(caption)
