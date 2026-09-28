@@ -115,11 +115,36 @@ row for every possible pair among the website's proteins (~2.3M for 2145
 proteins, since these are dense matrices, not just the 138,295 pairs AF3
 happened to pool), with a score column per source (`NaN` where a source
 doesn't cover that pair) plus a `unified_score` combining whichever sources
-have data for that pair (`eukaryoma_ppi.external_scores.compute_unified_score`
--- currently the mean percentile rank across available sources; a
-placeholder documented as easy to swap for a different combination method
-later). The home page's "Data source coverage" section summarizes how many
-pairs each source (and combination of sources) covers.
+have data for that pair (`eukaryoma_ppi.external_scores.compute_unified_score`).
+The home page's "Data source coverage" section summarizes how many pairs
+each source (and combination of sources) covers.
+
+### Unified score: weightless vs. weighted
+
+Each source's score is turned into a percentile rank (0-1, computed only
+over the pairs it covers), and a pair's `unified_score` is the mean of its
+available per-column ranks -- this is the persisted, on-disk default
+("weightless": every available source counts equally).
+
+The **Unified Ranking** page can switch to **weighted** instead: each
+source is weighted by its own raw (pre-rank) standard deviation, normalized
+to sum to 1 (`eukaryoma_ppi.external_scores.compute_default_weights`) -- a
+source whose values barely vary can't discriminate between pairs (e.g. an
+AF3 ipTM that's ~0.95 for nearly everyone), so it counts for less. Rows
+missing a given source have that source's weight dropped and the rest
+renormalized, the same way the weightless mean already handles missing
+columns.
+
+This choice is a **session-wide setting**, not a per-page one: picking
+"weighted" on the Unified Ranking page changes what every other page shows
+too (Annotations, Protein View), via a `st.session_state` key every page
+reads (`eukaryoma_ppi.ui.get_unified_score_mode`). Recomputing the weighted
+rank over all ~2.3M pairs takes under a second, so each page just redoes it
+in memory (cached per mode, so repeat page visits are instant) rather than
+needing a second column on disk. Only the two-mode toggle is implemented so
+far -- per-source custom weights are a natural next step were it needed,
+since the weighting machinery (`compute_unified_score(df, cols, weights=...)`)
+already takes an arbitrary weights dict.
 
 Override source file paths with `EUKARYOMA_COABUNDANCE_FILE`,
 `EUKARYOMA_COFRACTIONATION_FILE`, `EUKARYOMA_PHYLOPROFILING_FILE`. Any of the

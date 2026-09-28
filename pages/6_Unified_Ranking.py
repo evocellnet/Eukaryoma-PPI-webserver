@@ -6,10 +6,10 @@ from eukaryoma_ppi.config import ANNOTATIONS_INDEX_FILE, UNIVERSE_INDEX_FILE
 st.set_page_config(page_title="Unified Ranking - Eukaryoma PPI", page_icon="🧬", layout="wide")
 st.title("Unified Ranking")
 st.write(
-    "Every pair with a score from at least one source, ranked by a unified score. For now the unified "
-    "score is the mean percentile rank across whichever sources have data for that pair (see "
-    "`eukaryoma_ppi.external_scores.compute_unified_score`) -- a placeholder that can be swapped for a "
-    "different combination method later. Select a row to view its AF3 structure, if one has been predicted."
+    "Every pair with a score from at least one source, ranked by a unified score: each source's score is "
+    "turned into a percentile rank, then combined into one number per pair (see "
+    "`eukaryoma_ppi.external_scores.compute_unified_score`). Select a row to view its AF3 structure, if one "
+    "has been predicted."
 )
 
 if not UNIVERSE_INDEX_FILE.exists():
@@ -29,12 +29,35 @@ def get_universe_for_ranking():
 
 
 @st.cache_data
+def get_scored_universe(_universe_df, mode):
+    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode)
+
+
+@st.cache_data
 def get_pattern_counts(_universe_df):
     pattern_counts, _n_sources_counts = external_scores.source_presence_summary(_universe_df)
     return pattern_counts
 
 
-universe_df = get_universe_for_ranking()
+st.subheader("Unified score")
+mode = ui.unified_score_mode_selector()
+universe_df, weights = get_scored_universe(get_universe_for_ranking(), mode)
+if weights is not None:
+    weights_caption = ", ".join(
+        f"{external_scores.ALL_SOURCE_LABELS.get(col, col)}: {w:.2f}"
+        for col, w in sorted(weights.items(), key=lambda item: -item[1])
+    )
+    st.caption(
+        "Default weights, from each source's own score spread (a source whose values barely vary can't "
+        f"discriminate between pairs, so it counts for less): {weights_caption}."
+    )
+else:
+    st.caption("Every available source counts equally toward the unified score.")
+st.caption(
+    "This choice applies everywhere the unified score is shown (Annotations, Protein View) -- change it "
+    "back here at any time."
+)
+
 st.caption(f"{len(universe_df):,} possible pairs among all website proteins.")
 
 max_sources = int(universe_df["n_sources_present"].max())

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from eukaryoma_ppi import structures, viewer
+from eukaryoma_ppi import external_scores, structures, viewer
 
 # Row highlight for pairs flagged true-positive by CORUM/Marcotte complex
 # co-membership (see eukaryoma_ppi.complex_annotations). Both present wins.
@@ -18,6 +18,81 @@ TP_LEGEND = (
     "Highlighted rows are pairs flagged as a known true-positive interaction by complex "
     "co-membership: \U0001F7E9 CORUM, \U0001F7E6 Marcotte, \U0001F7EA both."
 )
+
+# Unified score combination mode, shared across every page via
+# st.session_state -- set once by unified_score_mode_selector (Unified
+# Ranking page), read everywhere else by get_unified_score_mode(). This is
+# what keeps a mode picked on one page in sync on every other page without
+# each page needing its own copy of the control.
+#
+# Two keys, not one: Streamlit clears a *widget's* session_state entry
+# whenever that widget isn't instantiated on a script run -- which happens
+# on every page that isn't Unified Ranking, since only that page calls the
+# selectbox below. So the widget's own key (UNIFIED_SCORE_MODE_KEY) cannot
+# be trusted to survive navigation; UNIFIED_SCORE_MODE_PERSIST_KEY is a
+# plain (non-widget) session_state entry that does, and is what every page
+# actually reads.
+UNIFIED_SCORE_MODE_KEY = "unified_score_mode"
+UNIFIED_SCORE_MODE_PERSIST_KEY = "unified_score_mode_persisted"
+UNIFIED_SCORE_MODES = {
+    "weightless": "Weightless (equal-weighted mean rank)",
+    "weighted": "Weighted (default, by score distribution)",
+}
+
+
+def get_unified_score_mode():
+    """Active unified-score mode. Defaults to "weightless" (the original,
+    equal-weighted behaviour) until the user picks "weighted" on the Unified
+    Ranking page.
+    """
+    return st.session_state.get(UNIFIED_SCORE_MODE_PERSIST_KEY, "weightless")
+
+
+def _persist_unified_score_mode():
+    st.session_state[UNIFIED_SCORE_MODE_PERSIST_KEY] = st.session_state[UNIFIED_SCORE_MODE_KEY]
+
+
+def unified_score_mode_selector():
+    """Selectbox for the unified-score combination mode. Meant to be shown
+    once, on the Unified Ranking page -- every other page just reads the
+    choice back via get_unified_score_mode().
+
+    Seeds the widget's own session_state entry from the persisted mode
+    before instantiating it (rather than passing `index=`), so the widget
+    doesn't just spring back to the default the first time this page is
+    revisited (see the module-level note above).
+    """
+    if UNIFIED_SCORE_MODE_KEY not in st.session_state:
+        st.session_state[UNIFIED_SCORE_MODE_KEY] = get_unified_score_mode()
+    st.selectbox(
+        "Unified score type",
+        list(UNIFIED_SCORE_MODES.keys()),
+        format_func=lambda mode: UNIFIED_SCORE_MODES[mode],
+        key=UNIFIED_SCORE_MODE_KEY,
+        on_change=_persist_unified_score_mode,
+    )
+    return st.session_state[UNIFIED_SCORE_MODE_KEY]
+
+
+def recompute_unified_score(df, score_columns, mode):
+    """Apply `mode` to df's unified_score column.
+
+    Pure function of (df, mode) so callers can wrap it in st.cache_data
+    keyed on mode alone (df should come from an already st.cache_data'd
+    loader and be passed with a leading-underscore parameter name so
+    Streamlit doesn't re-hash the whole ~2.3M-row table on every call) --
+    this way the rank/weight recompute (sub-second, but not free) only
+    happens once per distinct mode, not on every widget interaction.
+
+    Returns (df, weights): weights is None in "weightless" mode, otherwise
+    the {column: weight} dict compute_default_weights derived from df.
+    """
+    if mode != "weighted":
+        return df, None
+    weights = external_scores.compute_default_weights(df, score_columns)
+    df = df.copy()
+    df["unified_score"] = external_scores.compute_unified_score(df, score_columns, weights=weights)
+    return df, weights
 
 
 @st.cache_data

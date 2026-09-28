@@ -30,7 +30,16 @@ def get_universe_for_annotations():
     return universe_df
 
 
-universe_df = get_universe_for_annotations()
+@st.cache_data
+def get_scored_universe(_universe_df, mode):
+    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode)[0]
+
+
+universe_df = get_scored_universe(get_universe_for_annotations(), ui.get_unified_score_mode())
+st.caption(
+    f"Unified score: **{ui.UNIFIED_SCORE_MODES[ui.get_unified_score_mode()]}** "
+    "(change this on the Unified Ranking page)."
+)
 
 SCORE_COLUMNS = list(external_scores.ALL_SOURCE_LABELS.items()) + [("unified_score", "Unified score")]
 SCORE_COLUMNS = [(col, label) for col, label in SCORE_COLUMNS if universe_df[col].notna().any()]

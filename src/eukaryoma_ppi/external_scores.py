@@ -55,6 +55,8 @@ ALL_SOURCE_LABELS = {
     "cofractionation_score": "Cofractionation",
     "phyloprofiling_score": "Phyloprofiling",
 }
+# The columns compute_unified_score combines -- same set/order as ALL_SOURCE_LABELS.
+UNIFIED_SCORE_COLUMNS = list(ALL_SOURCE_LABELS.keys())
 
 
 def normalize_external_id(raw_label):
@@ -145,17 +147,48 @@ def build_all_pairs_universe(website_ids):
     return pd.DataFrame({"protein_a": ids[iu[0]], "protein_b": ids[iu[1]]})
 
 
-def compute_unified_score(df, score_columns):
+def compute_unified_score(df, score_columns, weights=None):
     """Combined rank across whichever score_columns are present for a pair.
 
-    Placeholder aggregation, easy to swap out later: each column is turned
-    into a percentile rank (0-1, higher = better, computed only over the
-    pairs that have a value in that column), then a pair's unified_score is
-    the mean of its available per-column percentile ranks.
+    Each column is turned into a percentile rank (0-1, higher = better,
+    computed only over the pairs that have a value in that column). A pair's
+    unified_score is then the weighted mean of its available per-column
+    percentile ranks -- weights of the columns missing for that pair are
+    dropped and the rest renormalized, the same way a plain mean already
+    handles missing columns.
+
+    weights: {column: weight}, or None for an equal-weighted mean (every
+    source counts the same regardless of its coverage or distribution --
+    the original, "weightless" behaviour).
     """
     available = [c for c in score_columns if c in df.columns]
     percentiles = pd.DataFrame({c: df[c].rank(ascending=True, pct=True) for c in available})
-    return percentiles.mean(axis=1, skipna=True)
+    if weights is None:
+        return percentiles.mean(axis=1, skipna=True)
+
+    w = pd.Series({c: weights.get(c, 0.0) for c in available})
+    weighted_sum = percentiles.mul(w, axis=1).sum(axis=1, skipna=True)
+    weight_used = percentiles.notna().mul(w, axis=1).sum(axis=1)
+    return weighted_sum / weight_used.replace(0, np.nan)
+
+
+def compute_default_weights(df, score_columns):
+    """A default per-source weight for compute_unified_score's weighted mode,
+    driven by each score's own distribution: a source whose raw values are
+    tightly clustered carries little information to rank pairs by (e.g. a
+    score that's ~0.95 for nearly every pair can't discriminate between
+    them), so weight each available column by its raw (pre-rank) standard
+    deviation, normalized to sum to 1. Columns absent or entirely NaN are
+    left out; if every available column has zero spread, fall back to equal
+    weights rather than dividing by zero.
+    """
+    available = [c for c in score_columns if c in df.columns and df[c].notna().any()]
+    stds = {c: df[c].std(skipna=True) for c in available}
+    stds = {c: (0.0 if pd.isna(s) else float(s)) for c, s in stds.items()}
+    total = sum(stds.values())
+    if total == 0:
+        return {c: 1.0 / len(available) for c in available} if available else {}
+    return {c: s / total for c, s in stds.items()}
 
 
 def build_universe(website_ids, af3_pairs_df):
@@ -178,8 +211,7 @@ def build_universe(website_ids, af3_pairs_df):
             continue
         universe = universe.merge(source_pairs, on=["protein_a", "protein_b"], how="left")
 
-    score_cols = ["corrected_chain_pair_iptm"] + SCORE_COLUMNS
-    universe["unified_score"] = compute_unified_score(universe, score_cols)
+    universe["unified_score"] = compute_unified_score(universe, UNIFIED_SCORE_COLUMNS)
     return universe
 
 
