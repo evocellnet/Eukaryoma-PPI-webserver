@@ -80,6 +80,55 @@ def true_positive_pairs(path, group_col, website_ids):
     return pairs
 
 
+def total_groups_in_file(path, group_col):
+    """Total distinct groups (corumID/category) in the raw file, regardless
+    of whether any member has a Capsaspora ortholog -- for comparison
+    against group_stats, which only covers groups with >=1 ortholog listed.
+    """
+    df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+    return df[group_col].nunique()
+
+
+def group_stats(path, group_col, website_ids, label_col=None):
+    """Per-group size/pair stats for one CORUM/Marcotte-style file, for the
+    Annotation Sources page's descriptive statistics.
+
+    Returns a DataFrame, one row per group (corumID/category) that has at
+    least one Capsaspora ortholog listed in the file:
+    - label: human-readable name for the group -- group_id itself unless
+      label_col is given (CORUM's `corumID` is a bare number, but every row
+      also carries a `category` column with the complex's actual name,
+      constant per corumID; Marcotte's group_col is already the readable
+      `category` name, so it has no separate label_col).
+    - n_members: Capsaspora orthologs listed for this group in the file
+      (before restricting to website proteins -- some may not have ended up
+      in the website's AF3-pooled protein set).
+    - n_website_members: subset of those that are website proteins.
+    - n_pairs: C(n_website_members, 2) -- the pairs this group alone
+      contributes to true_positive_pairs, *before* deduplicating against
+      pairs shared with other groups (a pair in two groups is still only
+      counted once in the final corum_tp/marcotte_tp flags).
+    """
+    groups = load_complex_groups(path, group_col)
+    labels = {}
+    if label_col is not None:
+        raw = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+        labels = dict(zip(raw[group_col], raw[label_col]))
+
+    rows = [
+        {
+            "group_id": group_id,
+            "label": labels.get(group_id, group_id),
+            "n_members": len(members),
+            "n_website_members": len(members & website_ids),
+        }
+        for group_id, members in groups.items()
+    ]
+    df = pd.DataFrame(rows, columns=["group_id", "label", "n_members", "n_website_members"])
+    df["n_pairs"] = df["n_website_members"] * (df["n_website_members"] - 1) // 2
+    return df
+
+
 def build_true_positive_flags(website_ids):
     """One row per pair flagged true-positive by CORUM and/or Marcotte, with
     a bool column per source (only True values are stored -- this table is

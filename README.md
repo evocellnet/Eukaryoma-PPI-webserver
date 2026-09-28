@@ -11,11 +11,13 @@ interaction score; **Pair Viewer** looks up a specific pair by protein id *or*
 by matching text in its annotation (e.g. searching "kinase" finds every
 protein whose description mentions it); **Coabundance**/**Cofractionation**/
 **Phyloprofiling** rank pairs by each external association-score source;
-**Unified Ranking** combines all sources into one table; and **Annotations**
-checks all of the above against known true-positive interactions. Selecting a
-row anywhere shows that pair's AF3 structure when one has been predicted, with
-a download button for the extracted PDB. Pairs known to be true positives
-(see below) are highlighted in every table.
+**Unified Ranking** combines all sources into one table; **Annotation
+Sources** describes where the CORUM/Marcotte true-positive annotations come
+from and how many complexes/pairs each contributes; and **Annotated Pairs**
+checks the scores against those annotations. Selecting a row anywhere shows
+that pair's AF3 structure when one has been predicted, with a download
+button for the extracted PDB. Pairs known to be true positives (see below)
+are highlighted in every table.
 
 **Protein View** flips this around: pick one protein of interest and see
 every interaction it's part of, external database links, its eggNOG-mapper
@@ -135,16 +137,29 @@ missing a given source have that source's weight dropped and the rest
 renormalized, the same way the weightless mean already handles missing
 columns.
 
+Switching to "weighted" also reveals one slider per source, seeded from the
+computed defaults -- drag any of them to override that source's weight (a
+"Reset to computed defaults" button clears all the overrides). Weights
+don't need to sum to 1; `compute_unified_score` renormalizes per pair over
+whichever sources that pair actually has, so only their *relative*
+proportions matter.
+
 This choice is a **session-wide setting**, not a per-page one: picking
-"weighted" on the Unified Ranking page changes what every other page shows
-too (Annotations, Protein View), via a `st.session_state` key every page
-reads (`eukaryoma_ppi.ui.get_unified_score_mode`). Recomputing the weighted
-rank over all ~2.3M pairs takes under a second, so each page just redoes it
-in memory (cached per mode, so repeat page visits are instant) rather than
-needing a second column on disk. Only the two-mode toggle is implemented so
-far -- per-source custom weights are a natural next step were it needed,
-since the weighting machinery (`compute_unified_score(df, cols, weights=...)`)
-already takes an arbitrary weights dict.
+"weighted" (and any slider overrides) on the Unified Ranking page changes
+what every other page shows too (Annotation Sources, Annotated Pairs,
+Protein View), via `st.session_state` keys every page reads
+(`eukaryoma_ppi.ui.get_unified_score_mode` /
+`get_active_unified_score_weights`). Recomputing the weighted rank over all
+~2.3M pairs takes under a second, so each page just redoes it in memory
+(cached per mode/weights, so repeat page visits are instant) rather than
+needing a second column on disk.
+
+Getting this to actually survive page navigation needs a small workaround:
+Streamlit clears a *widget's* session_state entry whenever that widget
+isn't instantiated on a script run -- true for the mode selectbox and every
+weight slider on every page except Unified Ranking. Each is therefore kept
+in a second, plain session_state key that isn't tied to any widget, and the
+widget is reseeded from it right before being (re)created.
 
 Override source file paths with `EUKARYOMA_COABUNDANCE_FILE`,
 `EUKARYOMA_COFRACTIONATION_FILE`, `EUKARYOMA_PHYLOPROFILING_FILE`. Any of the
@@ -179,18 +194,43 @@ co-membership pairs for proteins in more than one complex).
 2,996 pairs respectively, 8,935 flagged by either, 1,246 by both) and merges
 it into both `pairs.parquet` and `universe_scores.parquet`. Every pair table
 in the app highlights true-positive rows (green/blue/purple for
-CORUM/Marcotte/both); the **Annotations** page plots true-positive rate by
-score quantile for each score, and a jittered scatter of true-positive pairs
-per score plotted against a grey violin of the not-annotated population's
-score distribution (`eukaryoma_ppi.tp_analysis.baseline_score_density` -- a
+CORUM/Marcotte/both), including edges in Protein View's interactome graph.
+Override file paths with `EUKARYOMA_CORUM_FILE` / `EUKARYOMA_MARCOTTE_FILE`.
+
+### Annotation Sources: what's actually in these files
+
+CORUM's 2,655 complexes and Marcotte's 7 categories are very different in
+kind, and the **Annotation Sources** page exists to make that visible before
+trusting the true-positive counts above: `eukaryoma_ppi.complex_annotations.
+group_stats` reports, per complex/category, how many Capsaspora orthologs it
+lists, how many of those are website proteins, and how many pairs it alone
+contributes (`n_website_members choose 2` -- before deduplicating against
+pairs shared with other groups, so these per-group counts don't sum exactly
+to the final `corum_tp`/`marcotte_tp` totals above).
+
+Only 760 of CORUM's 1,880 orthology-mapped complexes have 2+ website
+proteins (median 1 pair contributed -- most complexes are small); Marcotte
+groups by the coarse `category` column (not the finer `category-specific`),
+leaving only 6 categories with any Capsaspora ortholog and 5 usable for
+pairs -- one of them, a single ~66-protein "ribosome" group, alone accounts
+for 2,145 of Marcotte's 2,996 true-positive pairs. The page shows a size-
+distribution histogram plus the largest complexes by pairs contributed for
+CORUM, and the full (tiny) group table for Marcotte.
+
+### Annotated Pairs: scores vs. annotations
+
+The **Annotated Pairs** page checks the association scores against the
+CORUM/Marcotte annotations described above: true-positive rate by score
+quantile for each score, and a jittered scatter of true-positive pairs per
+score plotted against a grey violin of the not-annotated population's score
+distribution (`eukaryoma_ppi.tp_analysis.baseline_score_density` -- a
 histogram computed over the full not-annotated population, not a sample,
 since that stays fast even at millions of rows) as a baseline for whether
 true-positive scores are actually higher, not just relative to each other.
 Both the scatter and the violin support brush-select or threshold-filter for
 pairs where a score and the annotation disagree (high score without
 annotation, or low score despite it) -- candidates for annotation false
-negatives or under-ranked real interactions. Override file paths with
-`EUKARYOMA_CORUM_FILE` / `EUKARYOMA_MARCOTTE_FILE`.
+negatives or under-ranked real interactions.
 
 ## Protein View and eggNOG-mapper annotation
 
@@ -236,8 +276,9 @@ pages, Unified Ranking, Protein View) has a **Download structure (.pdb)**
 button right below it, serving the same extracted two-chain PDB the viewer
 renders -- useful for figures or re-analysis outside the browser.
 
-Every chart in the app (score plots, the Annotations scatter/violin, the
-Protein View interactome) is a Vega-Embed chart under the hood, which ships
+Every chart in the app (score plots, the Annotation Sources/Annotated Pairs
+histograms and scatter/violin, the Protein View interactome) is a Vega-Embed
+chart under the hood, which ships
 its own **"..." menu** in the top-right corner of the chart with "Save as
 SVG"/"Save as PNG" built in -- no separate download button is needed for
 plots.

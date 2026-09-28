@@ -38,6 +38,10 @@ UNIFIED_SCORE_MODES = {
     "weightless": "Weightless (equal-weighted mean rank)",
     "weighted": "Weighted (default, by score distribution)",
 }
+# User-edited per-source weights for "weighted" mode, same persistence
+# pattern as the mode above: a plain session_state entry (survives
+# navigation) plus one widget key per source slider (doesn't).
+UNIFIED_SCORE_WEIGHTS_PERSIST_KEY = "unified_score_weights_persisted"
 
 
 def get_unified_score_mode():
@@ -74,22 +78,67 @@ def unified_score_mode_selector():
     return st.session_state[UNIFIED_SCORE_MODE_KEY]
 
 
-def recompute_unified_score(df, score_columns, mode):
+def get_active_unified_score_weights(default_weights):
+    """Weights to use in "weighted" mode: the user's last edited sliders, if
+    they've touched them this session, otherwise `default_weights` as-is
+    (computed fresh from the data by the caller, since that's cheap -- just
+    a per-column std -- compared to the rank/combine step these feed into).
+    """
+    return st.session_state.get(UNIFIED_SCORE_WEIGHTS_PERSIST_KEY, default_weights)
+
+
+def unified_score_weight_sliders(default_weights, labels):
+    """One slider per source, defaulting to `default_weights` (or the user's
+    own values from earlier this session). Meant to be shown once, on the
+    Unified Ranking page, right under unified_score_mode_selector -- other
+    pages read the result back via get_active_unified_score_weights().
+
+    Weights don't need to sum to 1 -- compute_unified_score renormalizes
+    per row over whichever sources that pair actually has -- but the
+    sliders start at values that do, and a "reset" button gets back there.
+
+    Returns the resulting {column: weight} dict.
+    """
+    active = get_active_unified_score_weights(default_weights)
+    columns = st.columns(len(default_weights))
+    weights = {}
+    for col_widget, (col, default) in zip(columns, default_weights.items()):
+        widget_key = f"unified_score_weight__{col}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = active.get(col, default)
+        weights[col] = col_widget.slider(labels.get(col, col), 0.0, 1.0, step=0.01, key=widget_key)
+    st.session_state[UNIFIED_SCORE_WEIGHTS_PERSIST_KEY] = weights
+
+    if st.button("Reset to computed defaults"):
+        for col in default_weights:
+            st.session_state.pop(f"unified_score_weight__{col}", None)
+        st.session_state.pop(UNIFIED_SCORE_WEIGHTS_PERSIST_KEY, None)
+        st.rerun()
+
+    return weights
+
+
+def recompute_unified_score(df, score_columns, mode, weights=None):
     """Apply `mode` to df's unified_score column.
 
-    Pure function of (df, mode) so callers can wrap it in st.cache_data
-    keyed on mode alone (df should come from an already st.cache_data'd
-    loader and be passed with a leading-underscore parameter name so
-    Streamlit doesn't re-hash the whole ~2.3M-row table on every call) --
-    this way the rank/weight recompute (sub-second, but not free) only
-    happens once per distinct mode, not on every widget interaction.
+    Pure function of (df, mode, weights) so callers can wrap it in
+    st.cache_data keyed on those alone (df should come from an already
+    st.cache_data'd loader and be passed with a leading-underscore parameter
+    name so Streamlit doesn't re-hash the whole ~2.3M-row table on every
+    call) -- this way the rank/weight recompute (sub-second, but not free)
+    only happens once per distinct (mode, weights), not on every widget
+    interaction.
 
-    Returns (df, weights): weights is None in "weightless" mode, otherwise
-    the {column: weight} dict compute_default_weights derived from df.
+    weights: explicit {column: weight} for "weighted" mode (e.g. the user's
+    edited sliders); if None, computed fresh from df's own distribution.
+    Ignored in "weightless" mode.
+
+    Returns (df, weights_used): weights_used is None in "weightless" mode.
     """
     if mode != "weighted":
         return df, None
-    weights = external_scores.compute_default_weights(df, score_columns)
+    if weights is None:
+        weights = external_scores.compute_default_weights(df, score_columns)
     df = df.copy()
     df["unified_score"] = external_scores.compute_unified_score(df, score_columns, weights=weights)
     return df, weights

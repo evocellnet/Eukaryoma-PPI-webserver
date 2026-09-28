@@ -6,12 +6,13 @@ import streamlit as st
 from eukaryoma_ppi import annotations, external_scores, tp_analysis, ui
 from eukaryoma_ppi.config import ANNOTATIONS_INDEX_FILE, TRUE_POSITIVE_INDEX_FILE, UNIVERSE_INDEX_FILE
 
-st.set_page_config(page_title="Annotations - Eukaryoma PPI", page_icon="🧬", layout="wide")
-st.title("Annotations")
+st.set_page_config(page_title="Annotated Pairs - Eukaryoma PPI", page_icon="🧬", layout="wide")
+st.title("Annotated Pairs")
 st.write(
     "How well do the association scores agree with CORUM/Marcotte complex co-membership -- treated here as "
     "known true-positive interactions? Use this page to check score quality and to spot pairs where the "
-    "score and the annotation disagree."
+    "score and the annotation disagree. For what CORUM/Marcotte actually are and how many complexes/pairs "
+    "they contribute, see the **Annotation Sources** page."
 )
 
 if not UNIVERSE_INDEX_FILE.exists() or not TRUE_POSITIVE_INDEX_FILE.exists():
@@ -31,15 +32,19 @@ def get_universe_for_annotations():
 
 
 @st.cache_data
-def get_scored_universe(_universe_df, mode):
-    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode)[0]
+def get_scored_universe(_universe_df, mode, weights):
+    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode, weights=weights)[0]
 
 
-universe_df = get_scored_universe(get_universe_for_annotations(), ui.get_unified_score_mode())
-st.caption(
-    f"Unified score: **{ui.UNIFIED_SCORE_MODES[ui.get_unified_score_mode()]}** "
-    "(change this on the Unified Ranking page)."
-)
+_mode = ui.get_unified_score_mode()
+_weights = None
+if _mode == "weighted":
+    _default_weights = external_scores.compute_default_weights(
+        get_universe_for_annotations(), external_scores.UNIFIED_SCORE_COLUMNS
+    )
+    _weights = ui.get_active_unified_score_weights(_default_weights)
+universe_df = get_scored_universe(get_universe_for_annotations(), _mode, _weights)
+st.caption(f"Unified score: **{ui.UNIFIED_SCORE_MODES[_mode]}** (change this on the Unified Ranking page).")
 
 SCORE_COLUMNS = list(external_scores.ALL_SOURCE_LABELS.items()) + [("unified_score", "Unified score")]
 SCORE_COLUMNS = [(col, label) for col, label in SCORE_COLUMNS if universe_df[col].notna().any()]

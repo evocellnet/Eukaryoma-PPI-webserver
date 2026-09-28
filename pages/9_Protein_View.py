@@ -32,8 +32,8 @@ def get_universe_for_protein_view():
 
 
 @st.cache_data
-def get_scored_universe(_universe_df, mode):
-    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode)[0]
+def get_scored_universe(_universe_df, mode, weights):
+    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode, weights=weights)[0]
 
 
 @st.cache_data
@@ -51,11 +51,15 @@ def get_eggnog_map():
     return eggnog.load_eggnog_annotations().set_index("protein_id").to_dict("index")
 
 
-universe_df = get_scored_universe(get_universe_for_protein_view(), ui.get_unified_score_mode())
-st.caption(
-    f"Unified score: **{ui.UNIFIED_SCORE_MODES[ui.get_unified_score_mode()]}** "
-    "(change this on the Unified Ranking page)."
-)
+_mode = ui.get_unified_score_mode()
+_weights = None
+if _mode == "weighted":
+    _default_weights = external_scores.compute_default_weights(
+        get_universe_for_protein_view(), external_scores.UNIFIED_SCORE_COLUMNS
+    )
+    _weights = ui.get_active_unified_score_weights(_default_weights)
+universe_df = get_scored_universe(get_universe_for_protein_view(), _mode, _weights)
+st.caption(f"Unified score: **{ui.UNIFIED_SCORE_MODES[_mode]}** (change this on the Unified Ranking page).")
 annotation_map = get_annotation_map()
 eggnog_map = get_eggnog_map()
 protein_options = sorted(set(universe_df["protein_a"]) | set(universe_df["protein_b"]))

@@ -29,8 +29,8 @@ def get_universe_for_ranking():
 
 
 @st.cache_data
-def get_scored_universe(_universe_df, mode):
-    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode)
+def get_scored_universe(_universe_df, mode, weights):
+    return ui.recompute_unified_score(_universe_df, external_scores.UNIFIED_SCORE_COLUMNS, mode, weights=weights)
 
 
 @st.cache_data
@@ -41,16 +41,26 @@ def get_pattern_counts(_universe_df):
 
 st.subheader("Unified score")
 mode = ui.unified_score_mode_selector()
-universe_df, weights = get_scored_universe(get_universe_for_ranking(), mode)
+if mode == "weighted":
+    default_weights = external_scores.compute_default_weights(
+        get_universe_for_ranking(), external_scores.UNIFIED_SCORE_COLUMNS
+    )
+    st.write(
+        "Default weights come from each source's own score spread (a source whose values barely vary can't "
+        "discriminate between pairs, so it counts for less) -- drag a slider to override any of them."
+    )
+    weights = ui.unified_score_weight_sliders(default_weights, external_scores.ALL_SOURCE_LABELS)
+else:
+    weights = None
+
+universe_df, weights = get_scored_universe(get_universe_for_ranking(), mode, weights)
 if weights is not None:
+    total = sum(weights.values()) or 1.0
     weights_caption = ", ".join(
-        f"{external_scores.ALL_SOURCE_LABELS.get(col, col)}: {w:.2f}"
+        f"{external_scores.ALL_SOURCE_LABELS.get(col, col)}: {w / total:.0%}"
         for col, w in sorted(weights.items(), key=lambda item: -item[1])
     )
-    st.caption(
-        "Default weights, from each source's own score spread (a source whose values barely vary can't "
-        f"discriminate between pairs, so it counts for less): {weights_caption}."
-    )
+    st.caption(f"Resulting weights (normalized): {weights_caption}.")
 else:
     st.caption("Every available source counts equally toward the unified score.")
 st.caption(
