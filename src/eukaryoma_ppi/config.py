@@ -77,6 +77,23 @@ EGGNOG_FILE = Path(
     )
 )
 
+# Yeast reference structures for Protein View's structure comparison: a HOG
+# (orthologous group) -> gene map covering Capsaspora plus five other
+# species (pickled from an ancestral-genomes OMA/FastOMA analysis), and a
+# directory of foldcomp-compressed AF3 monomer predictions for the yeast
+# side, one .fcz per lowercase UniProt accession. See eukaryoma_ppi.yeast_orthologs.
+YEAST_HOG2GENE_FILE = Path(
+    os.environ.get(
+        "EUKARYOMA_YEAST_HOG2GENE_FILE",
+        OTHER_DATA_SOURCES_DIR
+        / "yeast_hog2gene"
+        / "nodev_noiso_nemachangedplus_newdb2_porifirst_wHplus30_p200c10o5g2_5spec2yeastHOGs_unfiltered_33154.pkl",
+    )
+)
+YEAST_STRUCTURES_DIR = Path(
+    os.environ.get("EUKARYOMA_YEAST_STRUCTURES_DIR", OTHER_DATA_SOURCES_DIR / "yeast_structures")
+)
+
 # Derived data, produced once by scripts/build_data.py and only ever *read*
 # by the Streamlit app (the app never needs foldcomp at runtime).
 STRUCTURES_DIR = Path(os.environ.get("EUKARYOMA_STRUCTURES_DIR", DATA_DIR / "structures"))
@@ -92,6 +109,16 @@ UNIVERSE_INDEX_FILE = INDEX_DIR / "universe_scores.parquet"
 # Sparse: only pairs flagged true-positive by CORUM and/or Marcotte complex
 # co-membership. See eukaryoma_ppi.complex_annotations.
 TRUE_POSITIVE_INDEX_FILE = INDEX_DIR / "true_positive_pairs.parquet"
+# {protein_id: yeast UniProt accession} pairs actually usable as a reference
+# structure -- see eukaryoma_ppi.yeast_orthologs.
+YEAST_ORTHOLOGS_INDEX_FILE = INDEX_DIR / "yeast_orthologs.parquet"
+# Only the yeast structures actually referenced by YEAST_ORTHOLOGS_INDEX_FILE
+# are decompressed here (one .pdb per accession) -- pre-decompressing the
+# full ~6,000-structure yeast set the way pools are would cost several GB
+# for structures nobody will ever look up.
+YEAST_STRUCTURES_DECOMPRESSED_DIR = Path(
+    os.environ.get("EUKARYOMA_YEAST_STRUCTURES_DECOMPRESSED_DIR", STRUCTURES_DIR / "yeast")
+)
 
 # Only needed for scripts/build_data.py (local/HPC preprocessing), never at
 # Streamlit runtime. This is a custom internal build of foldcomp that reads

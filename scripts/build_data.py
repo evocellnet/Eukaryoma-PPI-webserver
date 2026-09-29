@@ -26,6 +26,12 @@ It:
      the website's proteins, with a score column per optional external
      source (coabundance/cofractionation/phyloprofiling) when its file is
      present, plus the AF3 pool iptm and a combined unified_score.
+  6. Resolves Capsaspora-to-yeast orthologs (network-bound, via OMA's REST
+     API -- cached, so this only actually runs once) into
+     data/index/yeast_orthologs.parquet, then decompresses just the
+     referenced yeast AF3 monomer predictions into
+     data/structures/yeast/<accession>.pdb for Protein View's reference-
+     structure picker.
 
 The Streamlit app only ever reads data/structures/ and data/index/; it does
 not depend on foldcomp or the raw .fcz files.
@@ -38,8 +44,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from eukaryoma_ppi import annotations, complex_annotations, eggnog, external_scores, index
-from eukaryoma_ppi.config import EGGNOG_FILE, FASTA_FILE, FOLDCOMP_BIN, POOLS_DIR, REPORT_FILE, STRUCTURES_DIR
+from eukaryoma_ppi import annotations, complex_annotations, eggnog, external_scores, index, structures, yeast_orthologs
+from eukaryoma_ppi.config import (
+    EGGNOG_FILE,
+    FASTA_FILE,
+    FOLDCOMP_BIN,
+    POOLS_DIR,
+    REPORT_FILE,
+    STRUCTURES_DIR,
+    YEAST_HOG2GENE_FILE,
+    YEAST_ORTHOLOGS_INDEX_FILE,
+    YEAST_STRUCTURES_DIR,
+)
 from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_pool
 
 
@@ -80,6 +96,16 @@ def main():
         "--skip-decompress",
         action="store_true",
         help="Skip decompression, only (re)build the index from data/structures/ already on disk",
+    )
+    parser.add_argument(
+        "--skip-yeast-orthologs",
+        action="store_true",
+        help="Skip resolving/decompressing yeast reference structures (step 6 -- network-bound)",
+    )
+    parser.add_argument(
+        "--force-yeast-orthologs",
+        action="store_true",
+        help="Re-resolve yeast orthologs via OMA's API even if yeast_orthologs.parquet already exists",
     )
     args = parser.parse_args()
 
@@ -165,6 +191,37 @@ def main():
     print("  Pairs by exact combination of sources present:")
     for _, row in pattern_counts.iterrows():
         print(f"    {row['sources_present']}: {row['n_pairs']:,}")
+
+    if args.skip_yeast_orthologs:
+        print("Skipping yeast ortholog resolution (--skip-yeast-orthologs).")
+    elif not YEAST_HOG2GENE_FILE.exists() or not YEAST_STRUCTURES_DIR.exists():
+        print(
+            f"  [WARN] Yeast HOG map ({YEAST_HOG2GENE_FILE}) or structures dir ({YEAST_STRUCTURES_DIR}) not "
+            "found; skipping yeast reference structures."
+        )
+    elif YEAST_ORTHOLOGS_INDEX_FILE.exists() and not args.force_yeast_orthologs:
+        print(
+            f"Yeast orthologs already resolved at {YEAST_ORTHOLOGS_INDEX_FILE} "
+            "(pass --force-yeast-orthologs to re-resolve)."
+        )
+        yeast_df = yeast_orthologs.load_yeast_orthologs()
+        decompressed, missing = structures.decompress_yeast_structures(set(yeast_df["yeast_accession"]))
+        print(f"  {decompressed:,} yeast reference structure(s) available, {missing:,} missing a local .fcz.")
+    else:
+        print("Resolving Capsaspora-to-yeast orthologs via OMA's REST API (network-bound, a few minutes)...")
+
+        def _progress(i, n):
+            if i % 200 == 0 or i == n:
+                print(f"    ...resolved {i}/{n} yeast OMA ids")
+
+        yeast_df = yeast_orthologs.build_yeast_orthologs(website_ids, progress_callback=_progress)
+        yeast_orthologs.save_yeast_orthologs(yeast_df)
+        print(
+            f"  {len(yeast_df):,} (protein, yeast ortholog) pairs resolved, covering "
+            f"{yeast_df['protein_id'].nunique():,}/{len(website_ids):,} website proteins."
+        )
+        decompressed, missing = structures.decompress_yeast_structures(set(yeast_df["yeast_accession"]))
+        print(f"  {decompressed:,} yeast reference structure(s) decompressed, {missing:,} missing a local .fcz.")
 
 
 if __name__ == "__main__":

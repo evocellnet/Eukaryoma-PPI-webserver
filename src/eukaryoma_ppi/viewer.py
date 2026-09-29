@@ -57,7 +57,7 @@ def render_single(pdb_text, color, width=320, height=320):
     (no alignment, unlike render_overlay)."""
     view = py3Dmol.view(width=width, height=height)
     view.addModel(pdb_text, "pdb")
-    view.setStyle({"cartoon": {"color": color}})
+    view.setStyle({}, {"cartoon": {"color": color}})
     view.zoomTo()
     view.spin(False)
     return view._make_html()

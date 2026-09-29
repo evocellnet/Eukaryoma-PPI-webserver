@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from eukaryoma_ppi import complex_annotations, external_scores, external_structures, structures, viewer
+from eukaryoma_ppi import complex_annotations, external_scores, external_structures, structures, viewer, yeast_orthologs
+from eukaryoma_ppi.config import YEAST_ORTHOLOGS_INDEX_FILE
 
 # Row highlight for pairs flagged true-positive by CORUM/Marcotte complex
 # co-membership (see eukaryoma_ppi.complex_annotations). Both present wins.
@@ -300,42 +301,71 @@ def get_human_uniprot_orthologs():
     return complex_annotations.human_uniprot_orthologs()
 
 
+@st.cache_data
+def get_yeast_orthologs():
+    """{protein_id: {yeast_accession, ...}} -- see
+    yeast_orthologs.yeast_orthologs_map. Empty if scripts/build_data.py
+    hasn't resolved/decompressed any yeast reference structures.
+    """
+    if not YEAST_ORTHOLOGS_INDEX_FILE.exists():
+        return {}
+    return yeast_orthologs.yeast_orthologs_map()
+
+
 @st.cache_data(show_spinner="Fetching reference structure from AlphaFold DB...")
 def get_alphafold_reference_pdb(accession):
     return external_structures.fetch_alphafold_pdb(accession)
 
 
+@st.cache_data
+def get_yeast_reference_pdb(accession):
+    return structures.get_yeast_structure_pdb(accession)
+
+
 def render_reference_structure_picker(protein_a, protein_b, key_prefix=""):
-    """Optional side-by-side reference: either protein's human ortholog's
-    own solo AlphaFold DB prediction (fetched live from EBI, by the UniProt
-    accession CORUM/Marcotte cross-reference it to), for comparing against
-    this pool's pair structure above. Silently does nothing if neither
-    protein has a usable accession.
+    """Optional reference alongside this pool's pair structure above: either
+    protein's ortholog own solo prediction, human (fetched live from
+    AlphaFold DB, by the UniProt accession CORUM/Marcotte cross-reference it
+    to) or yeast (a locally pre-decompressed AF3 monomer prediction, by the
+    UniProt accession a Capsaspora<->yeast HOG cross-reference resolves to
+    -- see eukaryoma_ppi.yeast_orthologs). Silently does nothing if neither
+    protein has a usable accession of either kind.
     """
-    orthologs = get_human_uniprot_orthologs()
+    human_orthologs = get_human_uniprot_orthologs()
+    yeast_orthologs_by_protein = get_yeast_orthologs()
     options = {}
     for label, protein_id in [("Protein A", protein_a), ("Protein B", protein_b)]:
-        for accession in sorted(orthologs.get(protein_id, ())):
-            options[f"{label} ({protein_id}) — human {accession}"] = accession
+        for accession in sorted(human_orthologs.get(protein_id, ())):
+            options[f"{label} ({protein_id}) — human {accession}"] = ("human", accession)
+        for accession in sorted(yeast_orthologs_by_protein.get(protein_id, ())):
+            options[f"{label} ({protein_id}) — yeast {accession}"] = ("yeast", accession)
     if not options:
         return
 
     st.divider()
     st.caption(
-        "Compare against a reference: a human ortholog's own solo prediction from **AlphaFold DB** (via "
-        "CORUM/Marcotte's complex membership, not this app's own AF3 predictions) -- fetched live from EBI."
+        "Compare against a reference: an ortholog's own solo prediction, either human (via CORUM/Marcotte's "
+        "complex membership, fetched live from **AlphaFold DB**) or yeast (via a Capsaspora-yeast orthologous "
+        "group, from a locally predicted AF3 monomer) -- neither is part of this app's own pair predictions."
     )
     choice = st.selectbox("Reference structure", ["None"] + list(options.keys()), key=f"{key_prefix}reference_structure")
     if choice == "None":
         return
 
-    accession = options[choice]
-    reference_pdb = get_alphafold_reference_pdb(accession)
-    if reference_pdb is None:
-        st.warning(f"Could not fetch the AlphaFold DB structure for {accession} (not available, or a network error).")
-        return
+    kind, accession = options[choice]
+    if kind == "human":
+        reference_pdb = get_alphafold_reference_pdb(accession)
+        if reference_pdb is None:
+            st.warning(f"Could not fetch the AlphaFold DB structure for {accession} (not available, or a network error).")
+            return
+        st.caption(f"AlphaFold DB human ortholog prediction for **{accession}**")
+    else:
+        reference_pdb = get_yeast_reference_pdb(accession)
+        if reference_pdb is None:
+            st.warning(f"No local structure file for yeast ortholog {accession}.")
+            return
+        st.caption(f"AF3 yeast ortholog monomer prediction for **{accession}**")
 
-    st.caption(f"AlphaFold DB human ortholog prediction for **{accession}**")
     components.html(viewer.render_single(reference_pdb, color="#54A24B"), height=420)
 
 

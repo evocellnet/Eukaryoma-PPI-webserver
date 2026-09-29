@@ -2,15 +2,21 @@
 
 The Streamlit app never touches foldcomp or the raw .fcz files: by the time
 it runs, scripts/build_data.py has already decompressed every pool once into
-data/structures/<pool>.cif. This module just pulls the two relevant chains
-back out of that plain mmCIF text with Biopython.
+data/structures/<pool>.cif (and, for the yeast reference structures used by
+Protein View, every accession an ortholog mapping actually references into
+data/structures/yeast/<accession>.pdb). This module just reads that already-
+decompressed data back -- pulling the two relevant chains out of a pool's
+mmCIF with Biopython, or a yeast monomer's PDB text as-is.
 """
 
 import io
+import tempfile
+from pathlib import Path
 
 from Bio.PDB import MMCIFParser, PDBIO, Select, Superimposer
 
-from eukaryoma_ppi.config import STRUCTURES_DIR
+from eukaryoma_ppi.config import STRUCTURES_DIR, YEAST_STRUCTURES_DECOMPRESSED_DIR, YEAST_STRUCTURES_DIR
+from eukaryoma_ppi.foldcomp_cli import FoldcompError, decompress_to_file
 
 _parser = MMCIFParser(QUIET=True)
 
@@ -82,3 +88,63 @@ def superpose_chains_as_pdb(pool_chain_pairs):
         io_writer.save(buf)
         pdb_texts.append(buf.getvalue())
     return pdb_texts
+
+
+def yeast_structure_pdb_path(accession):
+    return YEAST_STRUCTURES_DECOMPRESSED_DIR / f"{accession.lower()}.pdb"
+
+
+def get_yeast_structure_pdb(accession):
+    """Pre-decompressed yeast AF3 monomer prediction, as PDB text -- None if
+    scripts/build_data.py hasn't decompressed this accession (either no
+    local .fcz for it, or it isn't referenced by any Capsaspora ortholog).
+    Pure file read, no foldcomp involved at Streamlit runtime.
+    """
+    path = yeast_structure_pdb_path(accession)
+    if not path.exists():
+        return None
+    return path.read_text()
+
+
+def decompress_yeast_structures(accessions, force=False):
+    """Build-time only: decompress each accession's compressed AF3 monomer
+    prediction (YEAST_STRUCTURES_DIR/<accession>.fcz) to a plain .pdb file
+    in YEAST_STRUCTURES_DECOMPRESSED_DIR, for get_yeast_structure_pdb to
+    read later. Only decompresses the given accessions, not the full
+    ~6,000-protein yeast set -- see config.YEAST_STRUCTURES_DECOMPRESSED_DIR
+    for why (most of it would never be looked up).
+
+    Goes through mmCIF and Biopython's own PDBIO rather than decompressing
+    straight to PDB (like the pools do): the foldcomp CLI's own PDB writer
+    misformats negative coordinates for these particular monomer files
+    (verified directly -- e.g. resSeq/coordinate columns drift out of their
+    fixed widths, corrupting every atom after the first negative x), while
+    its mmCIF output is whitespace-delimited and unaffected, and Biopython's
+    writer (already used for every pool structure) is known-correct.
+
+    Returns (decompressed, missing): counts of accessions with/without a
+    local .fcz file to decompress from.
+    """
+    YEAST_STRUCTURES_DECOMPRESSED_DIR.mkdir(parents=True, exist_ok=True)
+    decompressed, missing = 0, 0
+    for accession in accessions:
+        out_path = yeast_structure_pdb_path(accession)
+        if out_path.exists() and not force:
+            decompressed += 1
+            continue
+        fcz_path = YEAST_STRUCTURES_DIR / f"{accession.lower()}.fcz"
+        if not fcz_path.exists():
+            missing += 1
+            continue
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                cif_path = Path(tmp_dir) / f"{accession}.cif"
+                decompress_to_file(fcz_path, cif_path)
+                structure = _parser.get_structure(accession, str(cif_path))
+                io_writer = PDBIO()
+                io_writer.set_structure(structure)
+                io_writer.save(str(out_path))
+            decompressed += 1
+        except FoldcompError:
+            missing += 1
+    return decompressed, missing

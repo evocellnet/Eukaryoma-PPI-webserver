@@ -46,12 +46,16 @@ data/
 │   └── annotations/          # true-positive complex annotations (see below)
 │       ├── corum/corum_annotations.tsv
 │       └── marcotte/marcotte_annotations.txt
-│   └── eggnogg_annotations/MICH_Capsaspora_owczarzaki_Schultz_A.tsv  # eggNOG-mapper output (see below)
+│   ├── eggnogg_annotations/MICH_Capsaspora_owczarzaki_Schultz_A.tsv  # eggNOG-mapper output (see below)
+│   ├── yeast_hog2gene/*.pkl        # Capsaspora<->yeast HOG map (see below)
+│   └── yeast_structures/<accession>.fcz  # foldcomp-compressed yeast AF3 monomers (see below)
 ├── pools/                   # <pool_name>.fcz, one pooled AF3 prediction per pool
 ├── structures/               # generated: <pool_name>.cif, decompressed by build_data.py
+│   └── yeast/<accession>.pdb  # generated: only the referenced yeast structures, decompressed
 └── index/                     # generated: pools.parquet, pairs.parquet,
                                 #            protein_annotations.parquet, eggnog_annotations.parquet,
-                                #            universe_scores.parquet, true_positive_pairs.parquet
+                                #            universe_scores.parquet, true_positive_pairs.parquet,
+                                #            yeast_orthologs.parquet
 ```
 
 By default the app looks for `data/` as a sibling of this repo checkout
@@ -303,34 +307,66 @@ side by side, unaligned. A pool is skipped from superposition (with a
 warning, not a crash) if its chain has a different CA count than the
 reference pool's -- `eukaryoma_ppi.structures.superpose_chains_as_pdb`.
 
-### Reference structures from AlphaFold DB
+### Reference structures: human (AlphaFold DB) and yeast (local AF3)
 
 Wherever a pair's AF3 structure is shown (every pair page, Unified Ranking,
 Protein View), an optional **reference structure** dropdown appears
-alongside it when either protein has a human ortholog: a live fetch from
-AlphaFold DB of that ortholog's own solo prediction, for comparing this
-app's AF3 *pair* prediction against a human structure of (presumably) the
-same fold predicted independently. `eukaryoma_ppi.external_structures`
-calls AFDB's prediction API for the current `pdbUrl` rather than guessing
-the file's model-version suffix directly (`AF-<accession>-F1-model_v<N>.pdb`
--- `N` changes release to release, so a hardcoded version 404s eventually).
+alongside it when either protein has a human and/or yeast ortholog --
+comparing this app's AF3 *pair* prediction against an ortholog's own solo
+structure, predicted completely independently.
 
-The accession comes from CORUM/Marcotte's own `uniprot` column, not
-eggNOG's `seed_ortholog` -- eggNOG's best-hit search spans many reference
-proteomes and is only very rarely an actual human UniProt accession for
-this species, whereas CORUM/Marcotte already curate the human gene each
-Capsaspora ortholog corresponds to (`eukaryoma_ppi.complex_annotations.
-human_uniprot_orthologs`; ~750 of the website's 2,145 proteins have at
-least one, some several when they're the ortholog of multiple human
-paralogs). Any fetch failure (protein has no such ortholog, network error,
-accession not actually in AFDB) is silent/graceful -- this is a nice-to-have
-next to the pair's own structure, not something the rest of the page
-depends on.
+**Human**, via a live fetch from AlphaFold DB: the accession comes from
+CORUM/Marcotte's own `uniprot` column, not eggNOG's `seed_ortholog` --
+eggNOG's best-hit search spans many reference proteomes and is only very
+rarely an actual human UniProt accession for this species, whereas
+CORUM/Marcotte already curate the human gene each Capsaspora ortholog
+corresponds to (`eukaryoma_ppi.complex_annotations.human_uniprot_orthologs`;
+~750 of the website's 2,145 proteins have at least one, some several when
+they're the ortholog of multiple human paralogs). `eukaryoma_ppi.
+external_structures` calls AFDB's prediction API for the current `pdbUrl`
+rather than guessing the file's model-version suffix directly
+(`AF-<accession>-F1-model_v<N>.pdb` -- `N` changes release to release, so a
+hardcoded version 404s eventually, as the original v4 guess did). Any fetch
+failure (protein has no such ortholog, network error, accession not
+actually in AFDB) is silent/graceful -- a nice-to-have next to the pair's
+own structure, not something the rest of the page depends on.
 
-A **yeast** reference source is a natural next step (AF3 monomer
-predictions exist on the lab's cluster) but isn't wired up yet -- it needs
-the actual files transferred locally and a defined ortholog-mapping
-convention first.
+**Yeast**, from AF3 monomer predictions run on the lab's cluster and
+foldcomp-compressed locally (`data/other_data_sources/yeast_structures/
+<accession>.fcz`, one per lowercase UniProt accession). The
+Capsaspora-to-yeast ortholog call comes from a HOG (orthologous group) map
+covering Capsaspora plus five other species
+(`data/other_data_sources/yeast_hog2gene/*.pkl`, keyed by NCBI taxon id --
+192875 for Capsaspora, 4932 for *S. cerevisiae*): two genes sharing a HOG
+under those two taxon keys are treated as orthologs
+(`eukaryoma_ppi.yeast_orthologs.capsaspora_to_yeast_oma_ids`). The yeast
+side of that map uses OMA's own internal per-species ids ("YEAST02308"),
+not UniProt accessions, so each one needs resolving via OMA's REST API --
+`resolve_all_yeast_uniprot_accessions` does this once at build time
+(network-bound, a few minutes even with concurrency, retrying transient
+502s from OMA's public server), caching the result to
+`data/index/yeast_orthologs.parquet` (943 of 2,145 website proteins covered
+as of the current files -- notably better than the human mapping, since
+this is a direct Capsaspora<->yeast call rather than routing through human
+complexes).
+
+`scripts/build_data.py` then decompresses only the *referenced* yeast
+accessions (not the full ~6,000-protein yeast set -- most of it would never
+be looked up) into `data/structures/yeast/<accession>.pdb`, going through
+mmCIF and Biopython's own `PDBIO` rather than decompressing straight to PDB
+like the pools do: the foldcomp CLI's own PDB writer turned out to
+misformat negative coordinates for these particular monomer files (a fixed-
+column parser reads through corrupted data past the first negative x
+coordinate -- verified directly by inspecting a raw decompressed file), while
+its mmCIF output is whitespace-delimited and unaffected. This keeps the
+Streamlit app itself foldcomp-free at runtime for yeast structures too, the
+same invariant the pools already rely on (the container "never calls
+foldcomp itself" -- see the Docker section below) -- `structures.
+get_yeast_structure_pdb` is a plain file read. Override paths with
+`EUKARYOMA_YEAST_HOG2GENE_FILE` / `EUKARYOMA_YEAST_STRUCTURES_DIR`; skip
+this step (e.g. if the yeast files aren't available yet) with
+`--skip-yeast-orthologs`, or force re-resolution with
+`--force-yeast-orthologs`.
 
 ## Downloading structures and plots
 

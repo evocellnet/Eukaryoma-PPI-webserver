@@ -35,3 +35,20 @@ def decompress_pool(fcz_path, out_cif_path):
             f"foldcomp decompress failed for {fcz_path}: "
             f"{result.stdout.strip()} {result.stderr.strip()}"
         )
+
+
+def decompress_to_file(fcz_path, out_path):
+    """Decompress any single-structure .fcz file (standard "FCMP" format or
+    the lab's custom "FCZC" one -- the bundled binary reads both) to
+    out_path, format inferred from its extension (e.g. .pdb, .cif).
+    """
+    result = subprocess.run(
+        [str(FOLDCOMP_BIN), "decompress", str(fcz_path), str(out_path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not out_path.exists():
+        raise FoldcompError(
+            f"foldcomp decompress failed for {fcz_path}: "
+            f"{result.stdout.strip()} {result.stderr.strip()}"
+        )
