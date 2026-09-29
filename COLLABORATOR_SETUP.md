@@ -1,10 +1,12 @@
 # Eukaryoma PPI Webserver — Setup for Collaborators
 
 You need two things: the **code** (this GitHub repo) and the **data**
-(`eukaryoma_ppi_data_20260916.tar.gz`, ~4.8 GB — shared separately, too large
-for git). The archive already contains the pre-built structures and score
-indexes, so you do **not** need to run any data-conversion step or have the
-custom `foldcomp` binary (it's macOS-only anyway).
+(`eukaryoma_ppi_data_20260929.tar.gz` — shared separately, too large for
+git). The archive already contains the pre-built structures, score
+indexes, and resolved reference-structure orthologs (human and yeast), so
+you do **not** need to run any data-conversion step, have the custom
+`foldcomp` binary (it's macOS-only anyway), or have network access to
+OMA/AlphaFold DB just to get the site running.
 
 Requires **Python 3.10+** and **git**.
 
@@ -17,20 +19,20 @@ cd Eukaryoma-PPI-webserver
 
 ## 2. Get the data
 
-Ask for `eukaryoma_ppi_data_20260916.tar.gz` and extract it anywhere on disk —
+Ask for `eukaryoma_ppi_data_20260929.tar.gz` and extract it anywhere on disk —
 it does not need to be near the repo. It unpacks into a single `data/`
 folder.
 
 **macOS / Linux:**
 ```bash
-mkdir -p ~/eukaryoma-ppi && tar -xzf eukaryoma_ppi_data_20260916.tar.gz -C ~/eukaryoma-ppi
+mkdir -p ~/eukaryoma-ppi && tar -xzf eukaryoma_ppi_data_20260929.tar.gz -C ~/eukaryoma-ppi
 # -> ~/eukaryoma-ppi/data
 ```
 
 **Windows (PowerShell — `tar` is built into Windows 10/11):**
 ```powershell
 mkdir $HOME\eukaryoma-ppi
-tar -xzf eukaryoma_ppi_data_20260916.tar.gz -C $HOME\eukaryoma-ppi
+tar -xzf eukaryoma_ppi_data_20260929.tar.gz -C $HOME\eukaryoma-ppi
 ```
 
 ## 3. Point the app at the data
@@ -81,6 +83,7 @@ Then open **http://localhost:8501**.
 
 ## Data size
 
-- Compressed archive: **~4.8 GB**.
-- Uncompressed on disk after extracting: **~14.5 GB**, almost all of it
-  `data/structures/` (the decompressed 3D structures).
+- Compressed archive: **~4.9 GB**.
+- Uncompressed on disk after extracting: **~14 GB**, almost all of it
+  `data/structures/` (the decompressed 3D structures, AF3 pools and yeast
+  reference monomers alike).
