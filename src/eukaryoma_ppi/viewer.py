@@ -20,17 +20,45 @@ PLDDT_COLORSCHEME = {
 }
 
 
-def render_pair(pdb_text, chain_a, chain_b, color_by="chain", width=760, height=560):
-    """Build a py3Dmol view of a two-chain complex, returned as embeddable HTML."""
+REFERENCE_COLOR = "#54A24B"
+CONTACT_COLOR = "#FFD700"
+
+
+def render_pair(
+    pdb_text,
+    chain_a,
+    chain_b,
+    color_by="chain",
+    reference_pdb_text=None,
+    contact_resi_a=None,
+    contact_resi_b=None,
+    width=760,
+    height=560,
+):
+    """Build a py3Dmol view of a two-chain complex, returned as embeddable
+    HTML. Optionally adds a second, already-aligned reference structure as
+    its own model (see eukaryoma_ppi.structures.align_reference_onto_chain)
+    and/or highlights specific interface residues as sticks on top of the
+    cartoon (see eukaryoma_ppi.structures.find_contact_residues).
+    """
     view = py3Dmol.view(width=width, height=height)
     view.addModel(pdb_text, "pdb")
 
     if color_by == "plddt":
-        view.setStyle({"chain": chain_a}, {"cartoon": {"colorscheme": PLDDT_COLORSCHEME}})
-        view.setStyle({"chain": chain_b}, {"cartoon": {"colorscheme": PLDDT_COLORSCHEME}})
+        view.setStyle({"model": 0, "chain": chain_a}, {"cartoon": {"colorscheme": PLDDT_COLORSCHEME}})
+        view.setStyle({"model": 0, "chain": chain_b}, {"cartoon": {"colorscheme": PLDDT_COLORSCHEME}})
     else:
-        view.setStyle({"chain": chain_a}, {"cartoon": {"color": CHAIN_COLORS[0]}})
-        view.setStyle({"chain": chain_b}, {"cartoon": {"color": CHAIN_COLORS[1]}})
+        view.setStyle({"model": 0, "chain": chain_a}, {"cartoon": {"color": CHAIN_COLORS[0]}})
+        view.setStyle({"model": 0, "chain": chain_b}, {"cartoon": {"color": CHAIN_COLORS[1]}})
+
+    if contact_resi_a:
+        view.addStyle({"model": 0, "chain": chain_a, "resi": list(contact_resi_a)}, {"stick": {"color": CONTACT_COLOR}})
+    if contact_resi_b:
+        view.addStyle({"model": 0, "chain": chain_b, "resi": list(contact_resi_b)}, {"stick": {"color": CONTACT_COLOR}})
+
+    if reference_pdb_text:
+        view.addModel(reference_pdb_text, "pdb")
+        view.setStyle({"model": 1}, {"cartoon": {"color": REFERENCE_COLOR}})
 
     view.zoomTo()
     view.spin(False)

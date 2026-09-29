@@ -153,7 +153,36 @@ is_a = universe_df["protein_a"] == protein_id
 protein_pairs = universe_df[is_a | (universe_df["protein_b"] == protein_id)].copy()
 protein_pairs["partner"] = np.where(protein_pairs["protein_a"] == protein_id, protein_pairs["protein_b"], protein_pairs["protein_a"])
 protein_pairs["partner_annotation"] = protein_pairs["partner"].map(annotation_map).fillna("")
+protein_pairs = external_scores.add_presence_columns(protein_pairs)
+all_protein_pairs = protein_pairs  # unfiltered -- "compare structures across pools" below uses this, not the filter
 st.caption(f"{len(protein_pairs):,} pairs involve this protein across any data source.")
+
+max_sources = int(protein_pairs["n_sources_present"].max())
+pattern_counts = protein_pairs["sources_present"].value_counts()
+filter_mode = st.radio(
+    "Filter by data source coverage",
+    ["All pairs", "Minimum number of sources", "Exact combination of sources"],
+    horizontal=True,
+    key="protview_filter_mode",
+)
+if filter_mode == "Minimum number of sources":
+    min_sources = st.selectbox("At least this many sources present", list(range(1, max_sources + 1)))
+    protein_pairs = protein_pairs[protein_pairs["n_sources_present"] >= min_sources]
+elif filter_mode == "Exact combination of sources":
+    combo_options = pattern_counts.index.tolist()
+    selected_combos = st.multiselect(
+        "Sources present",
+        combo_options,
+        default=combo_options,
+        format_func=lambda combo: f"{combo} ({pattern_counts[combo]:,})",
+    )
+    protein_pairs = protein_pairs[protein_pairs["sources_present"].isin(selected_combos)]
+if filter_mode != "All pairs":
+    st.caption(f"{len(protein_pairs):,} pairs match this filter.")
+
+if protein_pairs.empty:
+    st.info("No pairs match this filter.")
+    st.stop()
 
 sort_options = {label: col for col, label in SCORE_COLUMNS}
 sort_label = st.selectbox("Sort interactions by", list(sort_options.keys()), index=len(sort_options) - 1)
@@ -385,9 +414,11 @@ st.write(
     "across pooling contexts."
 )
 
-protein_chain = np.where(protein_pairs["protein_a"] == protein_id, protein_pairs["chain_a"], protein_pairs["chain_b"])
+protein_chain = np.where(
+    all_protein_pairs["protein_a"] == protein_id, all_protein_pairs["chain_a"], all_protein_pairs["chain_b"]
+)
 protein_pools = (
-    protein_pairs.assign(chain=protein_chain)
+    all_protein_pairs.assign(chain=protein_chain)
     .dropna(subset=["pool", "chain"])
     .drop_duplicates(subset=["pool"])[["pool", "chain"]]
     .sort_values("pool")

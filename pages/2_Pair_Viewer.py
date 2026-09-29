@@ -43,21 +43,27 @@ pairs_df = get_pairs_index()
 protein_options = get_protein_options(pairs_df)
 annotation_map = get_annotation_map()
 
+pending_pair = ui.consume_pending_pair()
+if "pair_viewer_protein_a" not in st.session_state:
+    st.session_state["pair_viewer_protein_a"] = pending_pair[0] if pending_pair else None
+if "pair_viewer_protein_b" not in st.session_state:
+    st.session_state["pair_viewer_protein_b"] = pending_pair[1] if pending_pair else None
+
 st.caption("Search by protein id or by its description/annotation (e.g. \"kinase\").")
 col_a, col_b = st.columns(2)
 protein_a = col_a.selectbox(
     "Protein A",
     protein_options,
-    index=None,
     placeholder="Search by id or annotation",
     format_func=lambda pid: format_protein_option(pid, annotation_map),
+    key="pair_viewer_protein_a",
 )
 protein_b = col_b.selectbox(
     "Protein B",
     protein_options,
-    index=None,
     placeholder="Search by id or annotation",
     format_func=lambda pid: format_protein_option(pid, annotation_map),
+    key="pair_viewer_protein_b",
 )
 
 if not protein_a or not protein_b:

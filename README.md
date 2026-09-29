@@ -230,14 +230,48 @@ CORUM, and the full (tiny) group table for Marcotte.
 
 The **Annotated Pairs** page checks the association scores against the
 CORUM/Marcotte annotations described above: true-positive rate by score
-quantile for each score, and a jittered scatter of true-positive pairs per
-score plotted against a grey violin of the not-annotated population's score
-distribution (`eukaryoma_ppi.tp_analysis.baseline_score_density` -- a
-histogram computed over the full not-annotated population, not a sample,
-since that stays fast even at millions of rows) as a baseline for whether
-true-positive scores are actually higher, not just relative to each other.
-Both the scatter and the violin support brush-select or threshold-filter for
-pairs where a score and the annotation disagree (high score without
+quantile for each score, and a jittered scatter plotted against a grey
+violin of the not-annotated population's score distribution
+(`eukaryoma_ppi.tp_analysis.baseline_score_density` -- a histogram computed
+over the full not-annotated population, not a sample, since that stays fast
+even at millions of rows) as a baseline for whether true-positive scores
+are actually higher, not just relative to each other.
+
+Only *annotated* pairs (CORUM/Marcotte/both) are plotted as individual
+dots -- the not-annotated population is only ever shown as the violin, never
+sampled dots. Earlier versions did plot a random sample of not-annotated
+pairs alongside the annotated ones, but that was actively misleading: with
+potentially millions of not-annotated pairs and a budget of a few thousand
+plotted dots, a "gap" with no dots visible in some score range didn't mean
+there were no not-annotated pairs there, just that the random sample missed
+that range -- and the brush-select table below queries the *full*
+data regardless of what's plotted, so it would return pairs from
+score ranges that looked empty in the scatter. The violin doesn't have this
+problem (it's computed over the full population), so it's the only view of
+the not-annotated distribution now; both it and the scatter share one
+brush-select (dragging on either updates the same selection, since both are
+keyed by the same field name -- Vega-Lite reports interval selections as
+`{field: [range]}` per the field actually dragged on, so the violin's x
+column is renamed to match the scatter's before charting, otherwise a
+drag on the violin would report under its own column name and never reach
+the code reading the scatter's).
+
+The scatter also has a click-to-select point selection (a *different*
+Vega-Lite selection type from the brush's interval, and reported
+differently by Streamlit's `on_select` event: a list of the clicked
+point's own field values, not a `{field: [range]}` dict) -- clicking a dot
+shows that exact pair's ids in a copyable code block, plus an "Open in Pair
+Viewer" button. That button hands off via `eukaryoma_ppi.ui.
+request_pair_view`: it stashes the pair in `st.session_state` and calls
+`st.switch_page`, and Pair Viewer's own selectboxes seed themselves from
+that stashed value the same way `unified_score_mode_selector` reads back
+its own persisted setting (see above) -- necessary for the same reason:
+Streamlit clears a widget's session_state entry whenever that widget isn't
+rendered on a script run, which includes the instant after a
+`switch_page` navigates away from the page that set it.
+
+Both the scatter/violin brush-select and the direct threshold sliders below
+list pairs where a score and the annotation disagree (high score without
 annotation, or low score despite it) -- candidates for annotation false
 negatives or under-ranked real interactions.
 
@@ -245,10 +279,16 @@ negatives or under-ranked real interactions.
 
 **Protein View** flips the browsing model from interaction-centric to
 protein-centric: pick one protein and see everything the site knows about it
-in one place -- every pair it appears in (sortable/filterable by any score,
-same true-positive highlighting as elsewhere), direct links out to UniProt,
+in one place -- every pair it appears in (sortable by any score, and
+filterable by data-source coverage the same way as Unified Ranking: a
+minimum number of sources present, or an exact combination -- see above),
+same true-positive highlighting as elsewhere, direct links out to UniProt,
 NCBI Protein and the AlphaFold DB, its eggNOG-mapper functional annotation,
-and a small interactome graph centered on it.
+and a small interactome graph centered on it. The coverage filter only
+narrows the interactions table and the interactome's node pool -- "Compare
+structures across pools" below still draws from every pool the protein
+appears in regardless of that filter, since it's a different question (the
+protein's own fold consistency, not which partners to show).
 
 The external-database links and the functional annotation (GO terms, KEGG
 orthologs/pathways, PFAM domains, COG category, eggNOG orthologous groups)
@@ -313,7 +353,22 @@ Wherever a pair's AF3 structure is shown (every pair page, Unified Ranking,
 Protein View), an optional **reference structure** dropdown appears
 alongside it when either protein has a human and/or yeast ortholog --
 comparing this app's AF3 *pair* prediction against an ortholog's own solo
-structure, predicted completely independently.
+structure, predicted completely independently. The reference isn't shown in
+a separate viewer: it's aligned onto the matching chain and rendered as a
+third model in the *same* py3Dmol view (green), so it visually overlaps the
+pair. Since a human/yeast ortholog has a different sequence (and residue
+count) than the Capsaspora chain it corresponds to, this can't reuse the
+same-length CA-list Superimposer call "Compare structures across pools"
+uses for repeat predictions of the *same* protein -- instead,
+`eukaryoma_ppi.structures.align_reference_onto_chain` first finds the
+residue correspondence via a global pairwise alignment (BLOSUM62), then
+superposes just the aligned columns, then (since divergent orthologs often
+align well over a conserved core but poorly at peripheral loops/termini)
+drops the worst-fitting 30% of matched residues and refits once more for a
+visually tighter core -- reported alongside the view as an N-residue core
+and an RMSD, e.g. "319-residue conserved core, RMSD 5.13 Å". A reference
+with no usable sequence overlap (fewer than 3 aligned residues) shows a
+warning instead of a broken/empty overlay.
 
 **Human**, via a live fetch from AlphaFold DB: the accession comes from
 CORUM/Marcotte's own `uniprot` column, not eggNOG's `seed_ortholog` --
@@ -367,6 +422,22 @@ get_yeast_structure_pdb` is a plain file read. Override paths with
 this step (e.g. if the yeast files aren't available yet) with
 `--skip-yeast-orthologs`, or force re-resolution with
 `--force-yeast-orthologs`.
+
+### Highlighting interface contacts
+
+Next to "Color by" on every pair's structure viewer, a "Highlight contact
+residues" checkbox computes which residues from the two chains sit near
+each other -- `eukaryoma_ppi.structures.find_contact_residues`: for every
+CA-CA distance between the two chains (a full but cheap n_a x n_b matrix via
+numpy, one atom per residue rather than a precise but far more expensive
+all-atom distance search), any pair within an adjustable cutoff (default 8
+Å, a standard proxy for "near the interface" -- not a precise heavy-atom
+contact definition, but a good enough guide for browsing where an
+interaction happens). Matching residues are drawn as gold sticks on top of
+the usual cartoon in the 3D view, and also as a separate sequence/position
+chart below it -- one row per protein, a tick at each residue position
+that's part of a contact -- for seeing at a glance whether the interface is
+concentrated in one region or spread across the sequence.
 
 ## Downloading structures and plots
 

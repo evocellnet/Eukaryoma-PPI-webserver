@@ -1,5 +1,6 @@
 """Shared Streamlit rendering used by more than one page."""
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -19,6 +20,32 @@ TP_LEGEND = (
     "Highlighted rows are pairs flagged as a known true-positive interaction by complex "
     "co-membership: \U0001F7E9 CORUM, \U0001F7E6 Marcotte, \U0001F7EA both."
 )
+
+# Cross-page navigation: a page that already knows which pair the user wants
+# (e.g. a clicked scatter point) can jump straight to Pair Viewer with that
+# pair pre-selected, via a plain session_state handoff -- Pair Viewer's own
+# selectbox keys get cleared on navigation away (the same widget-state gotcha
+# unified_score_mode works around above), so this key is deliberately not a
+# widget's own key, and Pair Viewer reads+clears it exactly once at the top
+# of its script, before creating its selectboxes.
+PENDING_PAIR_KEY = "pending_pair_selection"
+
+
+def request_pair_view(protein_a, protein_b):
+    """Ask Pair Viewer to preselect (protein_a, protein_b) and navigate
+    there. Call this as the direct result of a widget interaction (e.g.
+    inside an `if st.button(...):` block), not unconditionally every rerun.
+    """
+    st.session_state[PENDING_PAIR_KEY] = (protein_a, protein_b)
+    st.switch_page("pages/2_Pair_Viewer.py")
+
+
+def consume_pending_pair():
+    """Pop and return a pending (protein_a, protein_b) pair set by
+    request_pair_view, or None. Pair Viewer calls this once, before creating
+    its own protein selectboxes, to seed them.
+    """
+    return st.session_state.pop(PENDING_PAIR_KEY, None)
 
 # Unified score combination mode, shared across every page via
 # st.session_state -- set once by unified_score_mode_selector (Unified
@@ -264,7 +291,12 @@ def render_scores(row, score_fields):
 
 
 def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
-    """3D viewer if this pair has an AF3 pool structure, else a plain notice."""
+    """3D viewer if this pair has an AF3 pool structure, else a plain notice.
+
+    Also offers, right alongside it: an optional reference structure
+    (human/yeast ortholog, aligned onto the matching chain and shown in the
+    same view) and optional interface-contact highlighting.
+    """
     pool = row.get("pool")
     if pd.isna(pool):
         st.info("No AF3 structure has been predicted for this pair.")
@@ -276,9 +308,50 @@ def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
     # not match the order the two proteins were passed in -- resolve by identity.
     chain_for = {row["protein_a"]: row["chain_a"], row["protein_b"]: row["chain_b"]}
     chain_a, chain_b = chain_for[protein_a], chain_for[protein_b]
-
     pdb_text = get_pdb_text(pool, chain_a, chain_b)
-    html = viewer.render_pair(pdb_text, chain_a, chain_b, color_by=color_by)
+
+    reference_selection = render_reference_structure_selector(protein_a, protein_b, key_prefix=key_prefix)
+    reference_pdb_text = None
+    if reference_selection is not None:
+        kind, accession, ref_protein_id, raw_reference_pdb = reference_selection
+        target_chain_id = chain_for[ref_protein_id]
+        aligned = get_aligned_reference(pdb_text, target_chain_id, raw_reference_pdb)
+        if aligned is None:
+            st.warning("Could not align this reference onto the pair (no usable sequence overlap).")
+        else:
+            reference_pdb_text, n_core, rmsd = aligned
+            st.caption(
+                f"Reference ({kind} {accession}, shown in green) aligned onto chain {target_chain_id} "
+                f"({ref_protein_id}) -- {n_core}-residue conserved core, RMSD {rmsd:.2f} Å."
+            )
+
+    show_contacts = st.checkbox("Highlight contact residues (interface)", key=f"{key_prefix}show_contacts")
+    contact_resi_a = contact_resi_b = None
+    contacts_df = pd.DataFrame()
+    if show_contacts:
+        cutoff = st.slider(
+            "Contact cutoff (Cα-Cα distance, Å)", 4.0, 15.0, 8.0, step=0.5, key=f"{key_prefix}contact_cutoff"
+        )
+        contacts_df = get_contacts(pdb_text, chain_a, chain_b, cutoff)
+        if contacts_df.empty:
+            st.caption("No contacts found at this cutoff.")
+        else:
+            contact_resi_a = sorted(contacts_df["resi_a"].unique().tolist())
+            contact_resi_b = sorted(contacts_df["resi_b"].unique().tolist())
+            st.caption(
+                f"{len(contacts_df)} contacting residue pairs ({len(contact_resi_a)} residues in {protein_a}, "
+                f"{len(contact_resi_b)} in {protein_b}) highlighted in gold."
+            )
+
+    html = viewer.render_pair(
+        pdb_text,
+        chain_a,
+        chain_b,
+        color_by=color_by,
+        reference_pdb_text=reference_pdb_text,
+        contact_resi_a=contact_resi_a,
+        contact_resi_b=contact_resi_b,
+    )
 
     st.caption(f"Pool **{pool}** &mdash; chain {chain_a} = {protein_a}, chain {chain_b} = {protein_b}")
     components.html(html, height=580)
@@ -290,7 +363,8 @@ def render_structure_if_available(row, protein_a, protein_b, key_prefix=""):
         key=f"{key_prefix}download_structure",
     )
 
-    render_reference_structure_picker(protein_a, protein_b, key_prefix=key_prefix)
+    if not contacts_df.empty:
+        st.altair_chart(render_contact_position_chart(contacts_df, protein_a, protein_b), width="stretch")
 
 
 @st.cache_data
@@ -322,51 +396,91 @@ def get_yeast_reference_pdb(accession):
     return structures.get_yeast_structure_pdb(accession)
 
 
-def render_reference_structure_picker(protein_a, protein_b, key_prefix=""):
-    """Optional reference alongside this pool's pair structure above: either
-    protein's ortholog own solo prediction, human (fetched live from
-    AlphaFold DB, by the UniProt accession CORUM/Marcotte cross-reference it
-    to) or yeast (a locally pre-decompressed AF3 monomer prediction, by the
-    UniProt accession a Capsaspora<->yeast HOG cross-reference resolves to
-    -- see eukaryoma_ppi.yeast_orthologs). Silently does nothing if neither
-    protein has a usable accession of either kind.
+@st.cache_data
+def get_aligned_reference(pair_pdb_text, target_chain_id, reference_pdb_text):
+    return structures.align_reference_onto_chain(pair_pdb_text, target_chain_id, reference_pdb_text)
+
+
+@st.cache_data
+def get_contacts(pdb_text, chain_a_id, chain_b_id, cutoff):
+    return structures.find_contact_residues(pdb_text, chain_a_id, chain_b_id, cutoff)
+
+
+def render_reference_structure_selector(protein_a, protein_b, key_prefix=""):
+    """Selectbox for an optional reference structure: either protein's
+    ortholog's own solo prediction, human (fetched live from AlphaFold DB,
+    by the UniProt accession CORUM/Marcotte cross-reference it to) or yeast
+    (a locally pre-decompressed AF3 monomer prediction, by the UniProt
+    accession a Capsaspora<->yeast HOG cross-reference resolves to -- see
+    eukaryoma_ppi.yeast_orthologs). Returns None if neither protein has a
+    usable accession of either kind, or the user picked "None"; otherwise
+    (kind, accession, protein_id, reference_pdb_text) for the caller to
+    align onto protein_id's chain in the pair and merge into one view.
     """
     human_orthologs = get_human_uniprot_orthologs()
     yeast_orthologs_by_protein = get_yeast_orthologs()
     options = {}
     for label, protein_id in [("Protein A", protein_a), ("Protein B", protein_b)]:
         for accession in sorted(human_orthologs.get(protein_id, ())):
-            options[f"{label} ({protein_id}) — human {accession}"] = ("human", accession)
+            options[f"{label} ({protein_id}) — human {accession}"] = ("human", accession, protein_id)
         for accession in sorted(yeast_orthologs_by_protein.get(protein_id, ())):
-            options[f"{label} ({protein_id}) — yeast {accession}"] = ("yeast", accession)
+            options[f"{label} ({protein_id}) — yeast {accession}"] = ("yeast", accession, protein_id)
     if not options:
-        return
+        return None
 
-    st.divider()
     st.caption(
-        "Compare against a reference: an ortholog's own solo prediction, either human (via CORUM/Marcotte's "
-        "complex membership, fetched live from **AlphaFold DB**) or yeast (via a Capsaspora-yeast orthologous "
-        "group, from a locally predicted AF3 monomer) -- neither is part of this app's own pair predictions."
+        "Optional reference: an ortholog's own solo prediction, either human (via CORUM/Marcotte's complex "
+        "membership, fetched live from **AlphaFold DB**) or yeast (via a Capsaspora-yeast orthologous group, "
+        "from a locally predicted AF3 monomer) -- shown aligned onto the matching chain above, in green."
     )
     choice = st.selectbox("Reference structure", ["None"] + list(options.keys()), key=f"{key_prefix}reference_structure")
     if choice == "None":
-        return
+        return None
 
-    kind, accession = options[choice]
+    kind, accession, ref_protein_id = options[choice]
     if kind == "human":
         reference_pdb = get_alphafold_reference_pdb(accession)
         if reference_pdb is None:
             st.warning(f"Could not fetch the AlphaFold DB structure for {accession} (not available, or a network error).")
-            return
-        st.caption(f"AlphaFold DB human ortholog prediction for **{accession}**")
+            return None
     else:
         reference_pdb = get_yeast_reference_pdb(accession)
         if reference_pdb is None:
             st.warning(f"No local structure file for yeast ortholog {accession}.")
-            return
-        st.caption(f"AF3 yeast ortholog monomer prediction for **{accession}**")
+            return None
 
-    components.html(viewer.render_single(reference_pdb, color="#54A24B"), height=420)
+    return kind, accession, ref_protein_id, reference_pdb
+
+
+def render_contact_position_chart(contacts_df, protein_a_label, protein_b_label):
+    """A simple sequence/position view of the interface: one row per
+    protein, a tick per residue position that has a contact.
+    """
+    a_positions = (
+        contacts_df[["resi_a", "resn_a"]]
+        .drop_duplicates()
+        .rename(columns={"resi_a": "position", "resn_a": "resn"})
+    )
+    a_positions["protein"] = protein_a_label
+    b_positions = (
+        contacts_df[["resi_b", "resn_b"]]
+        .drop_duplicates()
+        .rename(columns={"resi_b": "position", "resn_b": "resn"})
+    )
+    b_positions["protein"] = protein_b_label
+    combined = pd.concat([a_positions, b_positions], ignore_index=True)
+
+    return (
+        alt.Chart(combined)
+        .mark_tick(thickness=3, size=20)
+        .encode(
+            x=alt.X("position:Q", title="Residue position"),
+            y=alt.Y("protein:N", title=None, axis=alt.Axis(labelLimit=200), scale=alt.Scale(paddingOuter=0.6)),
+            color=alt.Color("protein:N", legend=None, scale=alt.Scale(range=viewer.CHAIN_COLORS)),
+            tooltip=["protein", "position", "resn"],
+        )
+        .properties(height=140, title="Contact residue positions")
+    )
 
 
 def render_pair_detail(row, protein_a, protein_b, key_prefix=""):

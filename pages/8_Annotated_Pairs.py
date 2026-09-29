@@ -82,11 +82,12 @@ else:
 st.divider()
 st.header("Explore score vs. annotation")
 st.write(
-    "Each point is a pair, jittered by annotation category, plotted against the grey baseline distribution "
-    "of not-annotated pairs' scores (so you can see whether the true-positive rows actually sit above the "
-    "baseline, not just relative to each other). Drag a box over a region (e.g. high scores in the \"Not "
-    "annotated\" row) to list those pairs below -- candidates for false negatives in the annotation, or, in "
-    "the true-positive rows at low score, cases the score under-ranks."
+    "Each dot is an *annotated* pair (CORUM/Marcotte/both), jittered by category, plotted against the grey "
+    "violin -- the not-annotated population's full score density, not a sample, so its shape is always "
+    "accurate even where no dots are drawn. Not-annotated pairs aren't plotted as individual dots: there can "
+    "be millions of them, and a small random sample of dots would misrepresent where they actually sit -- "
+    "drag a box over the violin (or the dot area) to pull up the actual not-annotated pairs in that score "
+    "range below. Click a single dot to select just that pair."
 )
 
 explore_score_col, explore_score_label = st.selectbox(
@@ -100,10 +101,14 @@ def get_baseline_density(_universe_df, score_col, n_bins=40):
 
 
 density_df = get_baseline_density(universe_df, explore_score_col)
+# Renamed to match the scatter's x-field: the brush selection is shared
+# between the violin and the scatter (see combined_chart below) by field
+# name, so a box dragged on the violin (whose own x-field would otherwise
+# be "score_bin") reports under the same key the code below reads.
+if not density_df.empty:
+    density_df = density_df.rename(columns={"score_bin": explore_score_col})
 
-MAX_PLOTTED = 4000
-MIN_BASELINE_POINTS = 800  # always keep some "Not annotated" points for visual context,
-# even when the (rare) annotated points alone would otherwise fill the budget
+MAX_PLOTTED = 4000  # annotated pairs only now -- CORUM/Marcotte/both rarely exceed this for any one score
 
 
 @st.cache_data
@@ -111,20 +116,10 @@ def get_plot_sample(_universe_df, score_col, max_plotted, seed=0):
     valid = _universe_df[score_col].notna()
     plot_df = _universe_df.loc[valid, ["protein_a", "protein_b", score_col]].copy()
     plot_df["tp_category"] = tp_analysis.tp_category(_universe_df.loc[valid])
+    plot_df = plot_df[plot_df["tp_category"] != "Not annotated"]
 
     if len(plot_df) > max_plotted:
-        annotated = plot_df[plot_df["tp_category"] != "Not annotated"]
-        not_annotated = plot_df[plot_df["tp_category"] == "Not annotated"]
-
-        baseline_target = min(max(max_plotted - len(annotated), MIN_BASELINE_POINTS), len(not_annotated))
-        if len(not_annotated) > baseline_target:
-            not_annotated = not_annotated.sample(baseline_target, random_state=seed)
-
-        annotated_budget = max_plotted - len(not_annotated)
-        if len(annotated) > annotated_budget:
-            annotated = annotated.sample(annotated_budget, random_state=seed)
-
-        plot_df = pd.concat([annotated, not_annotated])
+        plot_df = plot_df.sample(max_plotted, random_state=seed)
 
     rng = np.random.default_rng(seed)
     plot_df["jitter"] = rng.uniform(-0.4, 0.4, size=len(plot_df))
@@ -132,10 +127,12 @@ def get_plot_sample(_universe_df, score_col, max_plotted, seed=0):
 
 
 plot_df = get_plot_sample(universe_df, explore_score_col, MAX_PLOTTED)
-st.caption(f"Showing {len(plot_df):,} of {int(universe_df[explore_score_col].notna().sum()):,} pairs with a {explore_score_label} score.")
+n_annotated = int((tp_analysis.tp_category(universe_df) != "Not annotated").sum())
+st.caption(f"Showing {len(plot_df):,} of {n_annotated:,} annotated pairs with a {explore_score_label} score.")
 
 brush = alt.selection_interval(name="brush", encodings=["x", "y"])
-category_order = ["Not annotated", "CORUM", "Marcotte", "Both"]
+point_select = alt.selection_point(name="point_select", fields=["protein_a", "protein_b"], on="click", empty=False)
+category_order = ["CORUM", "Marcotte", "Both"]
 scatter = (
     alt.Chart(plot_df)
     .mark_circle(size=40, opacity=0.5)
@@ -146,7 +143,7 @@ scatter = (
         color=alt.Color("tp_category:N", title="Annotation", sort=category_order),
         tooltip=["protein_a", "protein_b", alt.Tooltip(f"{explore_score_col}:Q", format=".3f"), "tp_category"],
     )
-    .add_params(brush)
+    .add_params(brush, point_select)
     .properties(height=320)
 )
 
@@ -158,19 +155,34 @@ else:
     violin_top = (
         alt.Chart(density_df)
         .mark_area(color="#888888", opacity=0.7, interpolate="monotone")
-        .encode(x=alt.X("score_bin:Q", title=None), y=alt.Y("density:Q", axis=None, scale=density_scale))
+        .encode(x=alt.X(f"{explore_score_col}:Q", title=None), y=alt.Y("density:Q", axis=None, scale=density_scale))
     )
     violin_bottom = (
         alt.Chart(density_df)
         .mark_area(color="#888888", opacity=0.7, interpolate="monotone")
-        .encode(x=alt.X("score_bin:Q", title=None), y=alt.Y("neg_density:Q", axis=None, scale=density_scale))
+        .encode(x=alt.X(f"{explore_score_col}:Q", title=None), y=alt.Y("neg_density:Q", axis=None, scale=density_scale))
     )
-    violin = (violin_top + violin_bottom).properties(
-        height=70, title="Not-annotated baseline (score density)"
+    violin = (
+        (violin_top + violin_bottom)
+        .add_params(brush)
+        .properties(height=70, title="Not-annotated baseline (score density, full population)")
     )
     combined_chart = alt.vconcat(violin, scatter).resolve_scale(x="shared")
 
-event = st.altair_chart(combined_chart, on_select="rerun", selection_mode="brush", key="annotation_scatter")
+event = st.altair_chart(
+    combined_chart, on_select="rerun", selection_mode=["brush", "point_select"], key="annotation_scatter"
+)
+
+# A point selection reports as a list of dicts (one per selected mark,
+# with the "fields" values for that point) -- unlike an interval/brush
+# selection, which reports as {field: [range-or-categories]}.
+point_sel = event.selection.get("point_select", []) if event.selection else []
+if point_sel:
+    sel_a, sel_b = point_sel[0]["protein_a"], point_sel[0]["protein_b"]
+    st.success(f"Selected pair: **{sel_a}** — **{sel_b}**")
+    st.code(f"{sel_a}\t{sel_b}", language=None)
+    if st.button("Open in Pair Viewer", key="open_pair_viewer_from_scatter"):
+        ui.request_pair_view(sel_a, sel_b)
 
 brush_sel = event.selection.get("brush", {}) if event.selection else {}
 x_range = brush_sel.get(explore_score_col)
@@ -207,56 +219,53 @@ st.write(
     "it, without needing to brush-select."
 )
 
-col_high, col_low = st.columns(2)
+st.subheader("High score, not annotated")
+st.caption("Possible false negatives in the annotation -- a strong score but no known complex co-membership.")
+score_values = universe_df[explore_score_col].dropna()
+default_high = float(score_values.quantile(0.95))
+high_thresh = st.slider(
+    "Minimum score", float(score_values.min()), float(score_values.max()), default_high, key="high_thresh"
+)
+high_candidates = universe_df[(universe_df[explore_score_col] >= high_thresh) & ~ground_truth]
+st.caption(f"{len(high_candidates):,} pairs match.")
+ui.render_ranked_pair_table(
+    high_candidates,
+    sort_col=explore_score_col,
+    column_order=[explore_score_col, "protein_a", "annotation_a", "protein_b", "annotation_b"],
+    column_config={
+        explore_score_col: st.column_config.NumberColumn(explore_score_label, format="%.3f"),
+        "protein_a": st.column_config.TextColumn("Protein A"),
+        "annotation_a": st.column_config.TextColumn("Protein A annotation"),
+        "protein_b": st.column_config.TextColumn("Protein B"),
+        "annotation_b": st.column_config.TextColumn("Protein B annotation"),
+    },
+    score_fields=[(explore_score_col, explore_score_label)],
+    default_top_n=min(500, len(high_candidates)) or 10,
+    key_prefix="highcand_",
+)
 
-with col_high:
-    st.subheader("High score, not annotated")
-    st.caption("Possible false negatives in the annotation -- a strong score but no known complex co-membership.")
-    score_values = universe_df[explore_score_col].dropna()
-    default_high = float(score_values.quantile(0.95))
-    high_thresh = st.slider(
-        "Minimum score", float(score_values.min()), float(score_values.max()), default_high, key="high_thresh"
-    )
-    high_candidates = universe_df[(universe_df[explore_score_col] >= high_thresh) & ~ground_truth]
-    st.caption(f"{len(high_candidates):,} pairs match.")
-    ui.render_ranked_pair_table(
-        high_candidates,
-        sort_col=explore_score_col,
-        column_order=[explore_score_col, "protein_a", "annotation_a", "protein_b", "annotation_b"],
-        column_config={
-            explore_score_col: st.column_config.NumberColumn(explore_score_label, format="%.3f"),
-            "protein_a": st.column_config.TextColumn("Protein A"),
-            "annotation_a": st.column_config.TextColumn("Protein A annotation"),
-            "protein_b": st.column_config.TextColumn("Protein B"),
-            "annotation_b": st.column_config.TextColumn("Protein B annotation"),
-        },
-        score_fields=[(explore_score_col, explore_score_label)],
-        default_top_n=min(500, len(high_candidates)) or 10,
-        key_prefix="highcand_",
-    )
-
-with col_low:
-    st.subheader("Low score, annotated true positive")
-    st.caption("Known interactions the score ranks poorly -- worth a second look at either.")
-    default_low = float(score_values.quantile(0.05))
-    low_thresh = st.slider(
-        "Maximum score", float(score_values.min()), float(score_values.max()), default_low, key="low_thresh"
-    )
-    low_candidates = universe_df[(universe_df[explore_score_col] <= low_thresh) & ground_truth]
-    st.caption(f"{len(low_candidates):,} pairs match.")
-    ui.render_ranked_pair_table(
-        low_candidates,
-        sort_col=explore_score_col,
-        column_order=[explore_score_col, "protein_a", "annotation_a", "protein_b", "annotation_b"],
-        column_config={
-            explore_score_col: st.column_config.NumberColumn(explore_score_label, format="%.3f"),
-            "protein_a": st.column_config.TextColumn("Protein A"),
-            "annotation_a": st.column_config.TextColumn("Protein A annotation"),
-            "protein_b": st.column_config.TextColumn("Protein B"),
-            "annotation_b": st.column_config.TextColumn("Protein B annotation"),
-        },
-        score_fields=[(explore_score_col, explore_score_label)],
-        default_top_n=min(500, len(low_candidates)) or 10,
-        sort_ascending=True,
-        key_prefix="lowcand_",
-    )
+st.divider()
+st.subheader("Low score, annotated true positive")
+st.caption("Known interactions the score ranks poorly -- worth a second look at either.")
+default_low = float(score_values.quantile(0.05))
+low_thresh = st.slider(
+    "Maximum score", float(score_values.min()), float(score_values.max()), default_low, key="low_thresh"
+)
+low_candidates = universe_df[(universe_df[explore_score_col] <= low_thresh) & ground_truth]
+st.caption(f"{len(low_candidates):,} pairs match.")
+ui.render_ranked_pair_table(
+    low_candidates,
+    sort_col=explore_score_col,
+    column_order=[explore_score_col, "protein_a", "annotation_a", "protein_b", "annotation_b"],
+    column_config={
+        explore_score_col: st.column_config.NumberColumn(explore_score_label, format="%.3f"),
+        "protein_a": st.column_config.TextColumn("Protein A"),
+        "annotation_a": st.column_config.TextColumn("Protein A annotation"),
+        "protein_b": st.column_config.TextColumn("Protein B"),
+        "annotation_b": st.column_config.TextColumn("Protein B annotation"),
+    },
+    score_fields=[(explore_score_col, explore_score_label)],
+    default_top_n=min(500, len(low_candidates)) or 10,
+    sort_ascending=True,
+    key_prefix="lowcand_",
+)
